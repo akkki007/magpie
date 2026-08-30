@@ -24,7 +24,7 @@ export function sparkPath(seed: number, points = 14, w = 72, h = 20) {
     .join(" ");
 }
 
-/** Blue, 1.25px — a machine drew this. */
+/** Violet, 1.25px — a machine drew this. */
 export function Sparkline({
   seed,
   className,
@@ -47,7 +47,7 @@ export function Sparkline({
     >
       <path
         d={sparkPath(seed, 14, width, height)}
-        stroke="var(--color-blue-400)"
+        stroke="var(--color-violet-400)"
         strokeWidth={1.25}
         strokeLinecap="round"
         strokeLinejoin="round"
@@ -65,17 +65,37 @@ const VIZ = [
   "var(--color-viz-6)",
 ];
 
+/**
+ * Grouped bars. `ticks` turns on the labelled left axis from the dashboard
+ * screen; `rightTicks` adds the second scale on the right. Both are optional so
+ * the small marketing version keeps rendering exactly as it did.
+ */
 export function GroupedBars({
   groups,
   className,
+  ticks,
+  rightTicks,
+  height = 132,
 }: {
   groups: { label: string; values: number[] }[];
   className?: string;
+  ticks?: number[];
+  rightTicks?: number[];
+  height?: number;
 }) {
   const w = 300;
-  const h = 132;
-  const pad = { l: 22, r: 6, t: 6, b: 18 };
-  const max = Math.max(...groups.flatMap((g) => g.values));
+  const h = height;
+  const pad = {
+    l: ticks ? 30 : 22,
+    r: rightTicks ? 26 : 6,
+    t: 6,
+    b: ticks ? 22 : 18,
+  };
+  // With a labelled axis the bars must be measured against the axis, not
+  // against their own maximum, or the tick values are decoration that lies.
+  const max = ticks
+    ? Math.max(...ticks)
+    : Math.max(...groups.flatMap((g) => g.values));
   const plotW = w - pad.l - pad.r;
   const plotH = h - pad.t - pad.b;
   const groupW = plotW / groups.length;
@@ -83,17 +103,45 @@ export function GroupedBars({
 
   return (
     <svg viewBox={`0 0 ${w} ${h}`} className={cn("w-full", className)} aria-hidden>
-      {[0, 0.5, 1].map((t) => (
-        <line
-          key={t}
-          x1={pad.l}
-          x2={w - pad.r}
-          y1={pad.t + plotH * t}
-          y2={pad.t + plotH * t}
-          stroke="var(--color-line)"
-          strokeWidth={1}
-          strokeDasharray={t === 1 ? undefined : "2 3"}
-        />
+      {(ticks ? ticks.map((_, i) => i / (ticks.length - 1)) : [0, 0.5, 1]).map(
+        (t) => (
+          <line
+            key={t}
+            x1={pad.l}
+            x2={w - pad.r}
+            y1={pad.t + plotH * t}
+            y2={pad.t + plotH * t}
+            stroke="var(--color-line)"
+            strokeWidth={1}
+            strokeDasharray={t === 1 ? undefined : "2 3"}
+          />
+        ),
+      )}
+
+      {/* Axis labels. Ticks arrive low-to-high and are drawn bottom-up. */}
+      {ticks?.map((value, i) => (
+        <text
+          key={`l${value}`}
+          x={pad.l - 6}
+          y={pad.t + plotH - (i / (ticks.length - 1)) * plotH + 3}
+          textAnchor="end"
+          fontSize={8}
+          fill="var(--color-ink-faint)"
+        >
+          {value}
+        </text>
+      ))}
+      {rightTicks?.map((value, i) => (
+        <text
+          key={`r${value}`}
+          x={w - pad.r + 6}
+          y={pad.t + plotH - (i / (rightTicks.length - 1)) * plotH + 3}
+          textAnchor="start"
+          fontSize={8}
+          fill="var(--color-ink-faint)"
+        >
+          {value}
+        </text>
       ))}
       {groups.map((g, gi) => {
         const gx = pad.l + gi * groupW + (groupW - barW * g.values.length - 4) / 2;
@@ -129,11 +177,12 @@ export function GroupedBars({
   );
 }
 
-export function Donut({
+export function Pie({
   slices,
   className,
 }: {
-  slices: { label: string; value: number }[];
+  /** `color` wins over the ramp when a slice has a hue of its own. */
+  slices: { label: string; value: number; color?: string }[];
   className?: string;
 }) {
   const total = slices.reduce((a, s) => a + s.value, 0);
@@ -142,10 +191,15 @@ export function Donut({
 
   /* Precompute each slice's start angle so the render pass stays pure. */
   const arcs = slices.reduce<
-    { label: string; from: number; to: number }[]
+    { label: string; from: number; to: number; color?: string }[]
   >((acc, s) => {
     const from = acc.length ? acc[acc.length - 1].to : -Math.PI / 2;
-    acc.push({ label: s.label, from, to: from + (s.value / total) * Math.PI * 2 });
+    acc.push({
+      label: s.label,
+      from,
+      to: from + (s.value / total) * Math.PI * 2,
+      color: s.color,
+    });
     return acc;
   }, []);
 
@@ -161,7 +215,7 @@ export function Donut({
           <path
             key={a.label}
             d={`M${c} ${c} L${x1.toFixed(2)} ${y1.toFixed(2)} A${r} ${r} 0 ${large} 1 ${x2.toFixed(2)} ${y2.toFixed(2)} Z`}
-            fill={VIZ[i % VIZ.length]}
+            fill={a.color ?? VIZ[i % VIZ.length]}
           />
         );
       })}
@@ -172,16 +226,26 @@ export function Donut({
 export function LineChart({
   series,
   className,
+  ticks,
+  labels,
+  height = 130,
 }: {
   series: { label: string; values: number[]; color: string }[];
   className?: string;
+  /** Low-to-high axis values. Given, they define the scale, not the data. */
+  ticks?: number[];
+  /** One per period, drawn under the plot. */
+  labels?: string[];
+  height?: number;
 }) {
   const w = 300;
-  const h = 130;
-  const pad = { l: 26, r: 8, t: 8, b: 18 };
+  const h = height;
+  const pad = { l: ticks ? 34 : 26, r: 8, t: 8, b: labels ? 22 : 18 };
   const plotW = w - pad.l - pad.r;
   const plotH = h - pad.t - pad.b;
-  const max = Math.max(...series.flatMap((s) => s.values));
+  const max = ticks
+    ? Math.max(...ticks)
+    : Math.max(...series.flatMap((s) => s.values));
   const n = series[0].values.length;
 
   const toPath = (values: number[]) =>
@@ -195,7 +259,10 @@ export function LineChart({
 
   return (
     <svg viewBox={`0 0 ${w} ${h}`} className={cn("w-full", className)} aria-hidden>
-      {[0, 0.25, 0.5, 0.75, 1].map((t) => (
+      {(ticks
+        ? ticks.map((_, i) => i / (ticks.length - 1))
+        : [0, 0.25, 0.5, 0.75, 1]
+      ).map((t) => (
         <line
           key={t}
           x1={pad.l}
@@ -205,6 +272,30 @@ export function LineChart({
           stroke="var(--color-line)"
           strokeDasharray="2 3"
         />
+      ))}
+      {ticks?.map((value, i) => (
+        <text
+          key={value}
+          x={pad.l - 6}
+          y={pad.t + plotH - (i / (ticks.length - 1)) * plotH + 3}
+          textAnchor="end"
+          fontSize={8}
+          fill="var(--color-ink-faint)"
+        >
+          ${value}
+        </text>
+      ))}
+      {labels?.map((label, i) => (
+        <text
+          key={label}
+          x={pad.l + (i / (labels.length - 1)) * plotW}
+          y={h - 5}
+          textAnchor="middle"
+          fontSize={8}
+          fill="var(--color-ink-faint)"
+        >
+          {label}
+        </text>
       ))}
       {series.map((s) => (
         <path

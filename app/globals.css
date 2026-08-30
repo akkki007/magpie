@@ -34,16 +34,36 @@
   --color-blue-500: #3b82f6;
   --color-blue-600: #2563eb;
   --color-blue-700: #1d4ed8;
-  --color-orb-from: #2563eb;
-  --color-orb-to: #60a5fa;
+  /* The AI orb. Sampled from the rail in designs/proto-screen-1: it is a
+     magenta-violet, not a blue. It marks the assistant, and the assistant is a
+     machine — same family as the formula pills below. */
+  --color-orb-hi: #eed2f8;
+  --color-orb-to: #b06ab2;
+  --color-orb-from: #9a56b9;
 
-  /* Data visualisation — a blue ramp, ordered light to deep, plus a neutral. */
-  --color-viz-1: #2563eb;
-  --color-viz-2: #60a5fa;
-  --color-viz-3: #bfdbfe;
-  --color-viz-4: #1e3a8a;
-  --color-viz-5: #7dd3fc;
-  --color-viz-6: #cbd5e1;
+  /* Machine-authored artefacts — violet. Sampled straight out of
+     designs/proto-screen-3 and designs/modelling-1: the formula pills, the
+     sparklines and the AI action bar are all violet in the prototypes, not
+     blue. Blue stays the *interactive* hue (buttons, links, focus); violet
+     marks the things a machine wrote. Keeping them apart is what stops an
+     AI-proposed number from looking like a button. */
+  --color-violet-50: #f7f3ff;
+  --color-violet-100: #f0eafc; /* formula pill + time-context chip fill */
+  --color-violet-200: #ddd2f8;
+  --color-violet-400: #7866d6; /* sparkline stroke */
+  --color-violet-500: #6751d7;
+  --color-violet-700: #542cb1; /* the one solid AI action ("Compare") */
+
+  /* Data visualisation — the prototypes' ramp, sampled from the chart legends
+     in designs/proto-screen-1. Teal → navy with a mint and a pale green, not a
+     rainbow: series separate by value as much as by hue, which is also what
+     makes a six-series chart survive greyscale. */
+  --color-viz-1: #1781bd; /* Sales */
+  --color-viz-2: #3db6ad; /* Expenses */
+  --color-viz-3: #cce5cf; /* Operating Profit */
+  --color-viz-4: #396799; /* navy */
+  --color-viz-5: #76d8bf; /* mint */
+  --color-viz-6: #4aa1a8; /* deep teal */
 
   /* Semantic — deltas only */
   --color-pos-bg: #d3f9e4;
@@ -260,11 +280,37 @@
   }
 
   /* Formula pill — blue because a machine evaluates it. */
+  /* A formula is machine-authored, so it is violet, and it has no border: in
+     designs/modelling-1 the pill is a flat fill inside the cell, not a control
+     sitting on top of it. */
   .formula-pill {
-    background-color: var(--color-blue-100);
-    border: 1px solid var(--color-blue-200);
+    background-color: var(--color-violet-100);
     border-radius: var(--radius-chip);
     color: var(--color-ink-2);
+  }
+
+  /* Scrollbars inside the product. The platform default is a heavy grey slab
+     that competes with the numbers — in a dense grid it is the loudest thing on
+     screen. Scoped to the app surface so /learning keeps the native one, which
+     is what a long article wants. */
+  [data-surface="app"] ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  [data-surface="app"] ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  [data-surface="app"] ::-webkit-scrollbar-thumb {
+    background: var(--color-line-strong);
+    border: 3px solid var(--color-surface);
+    border-radius: 999px;
+  }
+  [data-surface="app"] ::-webkit-scrollbar-thumb:hover {
+    background: var(--color-ink-faint);
+  }
+  [data-surface="app"] * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-line-strong) transparent;
   }
 
   /* Hairline grid backdrop used behind hero / CTA. */

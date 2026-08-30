@@ -10,11 +10,11 @@ and consumed through Tailwind. Never hardcode a hex outside `globals.css`.
 
 Quiet, dense, white. A finance instrument, not a marketing site. The UI recedes so the
 numbers are the only thing with contrast. Hairline borders instead of shadows, near-black
-type instead of pure black, and exactly one accent hue — **blue-400 (`#60a5fa`)** — used
-for machine intelligence (AI actions, formulas, sparklines) and for the primary CTA. Charts
-are a *ramp* of that same blue rather than a competing palette, so the whole product reads
-as one colour and one material. Organisational labels are pastel "highlighter" chips.
-Everything is calm until a number changes.
+type instead of pure black, and a palette with exactly two jobs in it: **blue-400
+(`#60a5fa`)** for the things you press, and **violet (`#6751d7`)** for the things the
+product wrote — formulas, sparklines, the assistant. Charts are a teal-to-navy ramp so a
+six-series chart still reads as one material. Organisational labels are pastel
+"highlighter" chips. Everything is calm until a number changes.
 
 Magpie: black, white, and one flash of blue. The mark is literal about it.
 
@@ -22,9 +22,11 @@ Magpie: black, white, and one flash of blue. The mark is literal about it.
 
 1. **White surfaces on an off-white page.** Cards float on `#F8F8FA`; they are `#FFFFFF`
    with a 1px `#EDEDED` border and effectively no shadow.
-2. **Blue is the only accent.** Formula pills, sparklines, agent actions, primary buttons,
-   chart series. There is no second brand hue — if something needs to stand out and it
-   isn't a delta, it is blue.
+2. **Two hues, split by authorship.** Blue = interactive (buttons, links, focus, the
+   mark). Violet = machine-authored (formula pills, sparklines, the orb, AI proposals).
+   Nothing else gets a hue unless it is a delta or a grouping chip. *This corrects an
+   earlier draft that called blue the only accent: the prototypes were violet in every one
+   of those places, and the screens are the ground truth.*
 3. **Blue-400 is the signature; deeper steps exist only for legibility.** `#60a5fa` is the
    hue people should remember. Solid fills that carry white text step down to `blue-600`
    (`#2563eb`, 5.2:1 on white) because `blue-400` under white text is ~2.3:1 and fails
@@ -66,12 +68,35 @@ Magpie: black, white, and one flash of blue. The mark is literal about it.
 | `--color-blue-700` | `#1D4ED8` | Pressed |
 | `--color-orb-from` / `--color-orb-to` | `#2563EB` → `#60A5FA` | Logo orb, AI avatar |
 
+### Machine-authored — violet
+| Token | Hex | Use |
+|---|---|---|
+| `--color-violet-50` | `#F7F3FF` | Time-context chip |
+| `--color-violet-100` | `#F0EAFC` | **Formula pill fill** |
+| `--color-violet-200` | `#DDD2F8` | Borders on violet surfaces |
+| `--color-violet-400` | `#7866D6` | **Sparkline stroke** |
+| `--color-violet-500` | `#6751D7` | AI series in a chart |
+| `--color-violet-700` | `#542CB1` | The one solid AI action ("Compare") |
+| `--color-orb-hi` / `-to` / `-from` | `#EED2F8` → `#B06AB2` → `#9A56B9` | The assistant orb |
+
+**Blue is interactive; violet is machine-authored.** Buttons, links, focus rings and the
+mark are blue — things *you* press. Formula pills, sparklines, the assistant orb and
+AI-proposed values are violet — things the *product* wrote. Sampled from
+`designs/proto-screen-3.jpg` and `designs/modelling-1.jpg`, where every one of them is
+violet rather than the blue an earlier draft of this file claimed.
+
+Keeping the two apart is not decoration: it is what stops an AI-proposed number from
+looking like something you can click, and a button from looking like something a model
+generated. If a new element is ambiguous, ask who authored it.
+
 ### Data visualisation (categorical, in order)
-`#2563EB` blue-600 → `#60A5FA` blue-400 → `#BFDBFE` blue-200 → `#1E3A8A` navy →
-`#7DD3FC` sky → `#CBD5E1` slate.
-A ramp, not a rainbow: series separate by *value* rather than by hue, which is also what
-makes a six-series chart survive being printed in greyscale. Six is the cap; beyond that,
-group into "Other".
+`#1781BD` blue → `#3DB6AD` teal → `#CCE5CF` pale green → `#396799` navy →
+`#76D8BF` mint → `#4AA1A8` deep teal.
+Sampled from the chart legends in `designs/proto-screen-1.jpg`. A ramp, not a rainbow:
+series separate by *value* as much as by hue, which is what makes a six-series chart
+survive being printed in greyscale. Six is the cap; beyond that, group into "Other".
+A slice or series with a meaning of its own names its colour explicitly rather than
+taking whatever the ramp's third entry happens to be.
 
 ### Semantic
 | Token | Hex | Use |
@@ -177,6 +202,21 @@ Inline references inside the formula render as nested chips.
 
 **Buttons** — primary: `--color-blue-600`, white, 13/500, radius 6, 32px tall. Secondary:
 `--bg-muted` + `--border-strong`. Ghost: transparent, `--bg-hover` on hover.
+
+**Password input** — the only input with something inside it: a 32px ghost icon button on
+the right edge (`--text-faint`, `--text-muted` on hover) that swaps the field between
+`password` and `text`. Swap the *attribute*, never mask characters by hand, or password
+managers stop recognising the field. The button is hidden until the `.js` class is on
+`<html>` — a control that cannot work should not be on screen.
+
+**Toast** — white card, 1px `--border`, radius 12, `--elev-2`, 13px `--text-primary`,
+bottom-right, 4s. The one component allowed a real shadow, because it floats above the page
+and a hairline alone leaves it looking pasted on. **Toasts confirm; they never instruct.**
+"Signed out", "Invite sent", "Copied" — things that already happened and that the user
+cannot see. A message that asks the user to *do* something goes next to the thing they must
+do: field errors inline under the field, form errors above the button. A validation toast
+floats away from its input, vanishes on a timer, and is gone by the time they tab back.
+Status colour appears on the icon only, never the surface.
 
 **Chat / agent panel** — user turn as a `--bg-subtle` bubble with 12px radius; assistant
 turn as plain prose; a collapsible "Thought for Ns" row with the orb icon; embedded result

@@ -1,6 +1,6 @@
 import { Info } from "lucide-react";
 import { DeltaBadge } from "@/components/ui/chip";
-import { GroupedBars, Donut, Legend, Sparkline } from "@/components/ui/charts";
+import { GroupedBars, Pie, Legend, Sparkline } from "@/components/ui/charts";
 
 const KPIS = [
   { label: "Revenue", value: "$1,230,569", delta: 5 },
@@ -81,7 +81,7 @@ export function DashboardSurface() {
           <div className="rounded-card border border-line p-3.5">
             <p className="text-[13px] font-medium text-ink">Profit Breakdown</p>
             <div className="mx-auto mt-2 max-w-[150px]">
-              <Donut
+              <Pie
                 slices={[
                   { label: "Laptop", value: 38 },
                   { label: "Smartphones", value: 36 },

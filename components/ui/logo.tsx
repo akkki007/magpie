@@ -43,7 +43,7 @@ export function Orb({ className }: { className?: string }) {
     <span
       aria-hidden
       className={cn(
-        "inline-block rounded-full bg-[radial-gradient(circle_at_30%_25%,#bfdbfe_0%,var(--color-orb-to)_40%,var(--color-orb-from)_100%)]",
+        "inline-block rounded-full bg-[radial-gradient(circle_at_30%_25%,var(--color-orb-hi)_0%,var(--color-orb-to)_40%,var(--color-orb-from)_100%)]",
         className,
       )}
     />
