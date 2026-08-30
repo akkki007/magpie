@@ -1,7 +1,10 @@
 # Magpie — Modelling Module
 
-> Status: **plan only.** Nothing here is implemented yet. Build order is
-> landing page → auth → modelling. The original product brief is preserved verbatim in
+> Status (2026-08-30): **the shell is built, the engine is not.** Landing and auth are
+> done; `/workspace` renders the dashboard from `designs/proto-screen-1.jpg` against
+> fixtures in `lib/demo/dashboard.ts`. Nothing below §7's M0 exists yet — there is no
+> `Model` table, no formula AST, and no evaluator. Phase M in `learning/path.ts` holds the
+> live status per task. The original product brief is preserved verbatim in
 > `modelling/brief.md`.
 
 Bring live data, AI forecasting, and collaboration into a single modelling workspace so
@@ -26,7 +29,7 @@ features. Build one engine and six templates.**
 
 ---
 
-## 1. Core architectural decisionMagpies
+## 1. Core architectural decisions
 
 These are the calls I'd make, with the reasoning, because they're expensive to reverse.
 
@@ -250,3 +253,58 @@ M0–M2 is the real project. M3 onward is comparatively mechanical if §1.3 is r
 - **Numeric precision** — `numeric` in Postgres, a decimal library in TS if we ever do
   compounding. Floats will produce $0.01 discrepancies that finance users will report as
   bugs, correctly.
+
+---
+
+## 9. M0 in detail — the next thing to build
+
+Everything above is the shape of the whole module. This section is the part that gets
+built next, specified tightly enough that it can be started without another decision.
+
+**Goal:** delete `lib/demo/dashboard.ts` and have `/workspace` render the same screen from
+Postgres. Nothing computes yet — M0 stores and reads; M2 is what makes formulas mean
+anything.
+
+### Tables
+
+Added to the existing `prisma/schema.prisma`, alongside the Better Auth tables:
+
+```prisma
+Model            id, organisationId?, name, slug, baseGrain(MONTH), horizonStart,
+                 horizonEnd, createdById, createdAt, updatedAt
+VariableGroup    id, modelId, name, chip(AMBER|ROSE|GRAPHITE|SKY|BLUE), order
+Variable         id, modelId, groupId, name, kind(INPUT|FORMULA|LINKED),
+                 format(CURRENCY|COUNT|PERCENT|RATIO|DATE),
+                 aggregation(SUM|FIRST|LAST|AVG|WEIGHTED_AVG|NONE), order
+FormulaNode      id, variableId, parentId, type, op?, literal?, refVariableId?, order
+VariableInput    id, variableId, period(Date), value numeric(20,6)
+VariableSeries   id, variableId, scenarioId?, dimensionKey, values jsonb, staleAt?
+Scenario         id, modelId, name, parentId?, isBase
+```
+
+`organisationId` is nullable **only** until A3 lands the org tables; the moment it exists
+it becomes required and every query in M1 goes through `requireMembership`. Writing the
+column now costs nothing and avoids a migration that touches every row later.
+
+### Decisions already made, restated so they are not re-litigated
+
+- `numeric(20,6)`, never `float`. Prisma maps it to `Decimal`; the API layer converts once,
+  at the edge, and the UI never sees a float.
+- Formula rows are a self-referencing `FormulaNode` tree, not a string column — §1.1. M0
+  stores the tree; the parser that produces it is M2. Until then the seed writes trees
+  directly.
+- `VariableSeries.values` is a JSONB array ordered by period, one row per
+  `(variable, scenario, dimensionKey)` — §1.5. It is a **cache**: `staleAt` is set by the
+  dependency walk, and a stale row is recomputed, never trusted.
+- Unique on `(modelId, lower(name))` so a formula referencing "Revenue" can only mean one
+  variable.
+
+### Done when
+
+1. `bun run seed` builds the Annual Operating Plan: three groups, the variables from
+   `lib/demo/dashboard.ts`, and monthly series across the model horizon.
+2. `/workspace` renders that model with the demo import deleted, and the page's shape is
+   unchanged — which is the test that the fixture was honest.
+3. Running the seed twice leaves the same rows (upsert on the natural key, not `create`).
+4. A golden-file test asserts the seeded series round-trips through JSONB with full
+   `numeric` precision — the first test in the repo that would catch a float creeping in.
