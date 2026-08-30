@@ -42,3 +42,8 @@ next-env.d.ts
 
 # python
 __pycache__/
+
+/lib/generated/prisma
+
+# ...but the template for it is committed.
+!.env.example

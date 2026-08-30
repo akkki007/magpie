@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import { Inter, Inter_Tight } from "next/font/google";
 import localFont from "next/font/local";
+
+import { Toaster } from "@/components/ui/toast";
 import "./globals.css";
 
 const inter = Inter({
@@ -77,6 +79,12 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
           }}
         />
         {children}
+        {/*
+          Mounted once, at the root, because a toast has to survive the
+          navigation that triggered it. Styled for the product's white surface —
+          if /learning ever fires one in dark mode it will need its own variant.
+        */}
+        <Toaster />
       </body>
     </html>
   );

@@ -1,0 +1,93 @@
+// Magpie's data model. See docs/auth-plan.md §3 for why these tables look the
+// way they do.
+//
+// The auth tables below belong to Better Auth: it decides what columns it
+// needs from the config in lib/auth.ts, and querying a table that disagrees
+// with it fails at runtime, not at build.
+//
+// `bunx @better-auth/cli generate` is the usual way to derive them, but the CLI
+// is published separately and currently lags the library (1.5.0-beta against
+// better-auth 1.7.2) — it omits `account.issuer`, which the running library
+// writes on every sign-up. So the source of truth is the library itself:
+//
+//   bun run auth:tables
+//
+// prints the exact fields and indexes the installed version expects. Reconcile
+// this file against that output, then `bun run db:migrate`.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../lib/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id            String    @id
+  name          String
+  email         String
+  emailVerified Boolean   @default(false)
+  image         String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  sessions      Session[]
+  accounts      Account[]
+
+  @@unique([email])
+  @@map("user")
+}
+
+model Session {
+  id        String   @id
+  expiresAt DateTime
+  token     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  ipAddress String?
+  userAgent String?
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([token])
+  @@index([userId])
+  @@map("session")
+}
+
+model Account {
+  id String @id
+  /// Who vouched for this identity: `local:credential` for a password, or the
+  /// OAuth issuer URL. Paired with accountId it is what makes "the same Google
+  /// account" a single row rather than a duplicate on every sign-in.
+  issuer                String
+  accountId             String
+  providerId            String
+  userId                String
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@unique([issuer, accountId])
+  @@index([userId])
+  @@map("account")
+}
+
+model Verification {
+  id         String   @id
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([identifier])
+  @@map("verification")
+}
