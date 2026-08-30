@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import type { Block } from "@/learning/types";
 import { Inline } from "./markdown";
+import { CodeBlock } from "./code";
 import { Diagram } from "./mermaid";
 import { Quiz } from "./quiz";
 import { cn } from "@/lib/cn";
@@ -69,21 +70,7 @@ function BlockView({ block: b }: { block: Block }) {
     }
 
     case "code":
-      return (
-        <div className="my-6 overflow-hidden rounded-[10px] border border-paper-line bg-paper-card">
-          {b.file ? (
-            <div className="flex items-center gap-2 border-b border-paper-line-soft px-4 py-2">
-              <FileCode2 className="h-3.5 w-3.5 text-paper-faint" strokeWidth={1.75} />
-              <span className="font-mono text-[11.5px] text-paper-muted">{b.file}</span>
-            </div>
-          ) : null}
-          <pre className="overflow-x-auto px-4 py-3.5">
-            <code className="font-mono text-[12.5px] leading-[1.65] text-paper-ink">
-              {b.code.trim()}
-            </code>
-          </pre>
-        </div>
-      );
+      return <CodeBlock lang={b.lang} file={b.file} code={b.code} />;
 
     case "table":
       return (

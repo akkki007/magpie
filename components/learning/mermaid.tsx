@@ -3,6 +3,29 @@
 import { useEffect, useId, useState } from "react";
 import { Expand, X } from "lucide-react";
 import { Inline } from "./markdown";
+import { useTheme } from "./theme";
+
+/** Mirrors the --color-paper-* tokens in app/globals.css for each theme. */
+const MERMAID_COLORS = {
+  light: {
+    background: "#ffffff",
+    primaryColor: "#ffffff",
+    primaryBorderColor: "#c9c6c0",
+    primaryTextColor: "#1a1a18",
+    lineColor: "#8d8a83",
+    secondaryColor: "#f5f4f2",
+    tertiaryColor: "#f5f4f2",
+  },
+  dark: {
+    background: "#1b1b19",
+    primaryColor: "#1b1b19",
+    primaryBorderColor: "#43423c",
+    primaryTextColor: "#f0efeb",
+    lineColor: "#8b877e",
+    secondaryColor: "#141412",
+    tertiaryColor: "#141412",
+  },
+} as const;
 
 /**
  * Mermaid is ~500KB, so it is imported dynamically inside the effect — it never
@@ -10,6 +33,7 @@ import { Inline } from "./markdown";
  */
 export function Diagram({ chart, caption }: { chart: string; caption?: string }) {
   const id = useId().replace(/:/g, "");
+  const { theme } = useTheme();
   const [open, setOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   /* The rendered SVG lives in state, not in a ref read back out of the DOM —
@@ -27,17 +51,13 @@ export function Diagram({ chart, caption }: { chart: string; caption?: string })
           securityLevel: "strict",
           theme: "neutral",
           fontFamily: "var(--font-sans)",
-          themeVariables: {
-            background: "#ffffff",
-            primaryColor: "#ffffff",
-            primaryBorderColor: "#c9c6c0",
-            primaryTextColor: "#1a1a18",
-            lineColor: "#8d8a83",
-            secondaryColor: "#f5f4f2",
-                        tertiaryColor: "#f5f4f2",
-          },
+          /* Mermaid bakes colours into the SVG at render time, so unlike the rest
+             of the surface these cannot be swapped by a CSS variable — the diagram
+             has to be re-rendered when the theme changes. Hence `theme` in the
+             dependency array below. */
+          themeVariables: MERMAID_COLORS[theme],
         });
-        const { svg: rendered } = await mermaid.render(`m${id}`, chart);
+        const { svg: rendered } = await mermaid.render(`m${id}-${theme}`, chart);
         if (alive) setSvg(rendered);
       } catch (e) {
         if (alive) setError(e instanceof Error ? e.message : "diagram failed to render");
@@ -46,7 +66,7 @@ export function Diagram({ chart, caption }: { chart: string; caption?: string })
     return () => {
       alive = false;
     };
-  }, [chart, id]);
+  }, [chart, id, theme]);
 
   if (error) {
     return (
@@ -94,7 +114,7 @@ export function Diagram({ chart, caption }: { chart: string; caption?: string })
           aria-modal="true"
           onClick={() => setOpen(false)}
           onKeyDown={(e) => e.key === "Escape" && setOpen(false)}
-          className="fixed inset-0 z-50 flex items-center justify-center bg-paper-ink/40 p-6 backdrop-blur-sm"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-scrim p-6 backdrop-blur-sm"
         >
           <div
             onClick={(e) => e.stopPropagation()}

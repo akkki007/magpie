@@ -2,12 +2,13 @@ import type { Topic } from "./types";
 import type { SearchItem } from "@/components/learning/chrome";
 
 import nextjsAppRouter from "./nextjs-app-router/meta";
+import postgresPrisma from "./postgres-prisma/meta";
 
 /**
  * The topic registry. The `teach` skill appends to this list — that is the only
  * wiring a new topic needs.
  */
-export const topics: Topic[] = [nextjsAppRouter];
+export const topics: Topic[] = [nextjsAppRouter, postgresPrisma];
 
 export function getTopic(slug: string) {
   return topics.find((t) => t.slug === slug);

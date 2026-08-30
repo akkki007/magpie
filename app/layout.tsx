@@ -64,6 +64,18 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
             __html: "document.documentElement.classList.add('js')",
           }}
         />
+        {/*
+          Resolves the theme before the first paint, so /learning never flashes
+          white on the way to dark. It has to be inline and synchronous: anything
+          deferred runs after the browser has already painted, which is the flash.
+          Stored choice wins over the OS preference; a throw here must not take
+          the page down, so the whole thing is wrapped.
+        */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `try{var s=localStorage.getItem('magpie-theme');var d=s?s==='dark':matchMedia('(prefers-color-scheme: dark)').matches;document.documentElement.classList.add(d?'dark':'light')}catch(e){document.documentElement.classList.add('light')}`,
+          }}
+        />
         {children}
       </body>
     </html>

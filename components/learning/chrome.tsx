@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Search, X } from "lucide-react";
 import { Mark } from "@/components/ui/logo";
+import { ThemeToggle } from "./theme";
 
 export type SearchItem = {
   topic: string;
@@ -50,6 +51,8 @@ export function LearningHeader({ index }: { index: SearchItem[] }) {
             Search
             <kbd className="font-mono text-[10.5px] text-paper-faint">⌘K</kbd>
           </button>
+
+          <ThemeToggle />
         </div>
       </header>
 
@@ -74,7 +77,7 @@ function Palette({ index, onClose }: { index: SearchItem[]; onClose: () => void 
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-start justify-center bg-paper-ink/30 p-6 pt-[12vh] backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-start justify-center bg-scrim p-6 pt-[12vh] backdrop-blur-sm"
       onClick={onClose}
     >
       <div

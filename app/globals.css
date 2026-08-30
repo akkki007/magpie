@@ -1,5 +1,8 @@
 @import "tailwindcss";
 
+/* Class-based dark mode. Set on <html> before paint by the script in app/layout.tsx. */
+@custom-variant dark (&:where(.dark, .dark *));
+
 /* ─────────────────────────────────────────────────────────────────────────
    Magpie design tokens — see docs/design-system.md
    This file is the ONLY place a hex value may appear.
@@ -104,6 +107,10 @@
   --color-hint-line: #ecdcb8;
   --color-hint-fg: #8a6b23;
 
+  /* Modal scrim. Its own token because it must stay dark in BOTH themes — the
+     obvious `bg-paper-ink/40` inverts under dark mode and washes the page out. */
+  --color-scrim: rgba(20, 20, 18, 0.45);
+
   /* Generic only. A custom property is resolved where it is DECLARED, so if
      these referenced --font-newsreader (which only exists on the /learning
      wrapper, not on :root) the whole declaration would be invalid at computed
@@ -119,6 +126,75 @@
   [data-surface="learning"] {
     --font-serif: var(--font-newsreader), ui-serif, Georgia, serif;
     --font-mono: var(--font-jetbrains), ui-monospace, SFMono-Regular, monospace;
+  }
+
+  /* ── Dark mode: the LEARNING surface only ────────────────────────────────
+     docs/design-system.md is explicit that the product is a white instrument,
+     so none of the --color-app / --color-surface / --color-ink product tokens
+     are touched here. /learning is already a deliberately separate visual
+     language, and long-form reading at night is a real use for it.
+
+     These re-declare the same custom properties the @theme block above sets,
+     so every existing `bg-paper-card` / `text-paper-ink` utility follows along
+     with no markup change. @layer base wins over @theme on equal specificity
+     because it is emitted later. */
+  .dark {
+    --color-paper: #141412;
+    --color-paper-card: #1b1b19;
+    --color-paper-line: #2f2f2b;
+    --color-paper-line-soft: #252522;
+    --color-paper-ink: #f0efeb;
+    --color-paper-ink-2: #cbc9c2;
+    --color-paper-muted: #96938b;
+    --color-paper-faint: #6f6c64;
+    --color-paper-code: #201f1c;
+
+    /* Callout tones: same hues, re-cut for a dark ground. */
+    --color-ok-bg: #14231a;
+    --color-ok-line: #2d4b36;
+    --color-ok-fg: #6cc78d;
+    --color-no-bg: #271518;
+    --color-no-line: #4d2a2e;
+    --color-no-fg: #e8848e;
+    --color-hint-bg: #241f12;
+    --color-hint-line: #453c22;
+    --color-hint-fg: #d9b866;
+
+    --color-scrim: rgba(0, 0, 0, 0.6);
+
+    color-scheme: dark;
+  }
+}
+
+/* ── Shiki ────────────────────────────────────────────────────────────────
+   From https://code-blocks.pheralb.dev/r/shiki-css.json, trimmed to the parts
+   this codebase uses — the lesson `code` block has no diff/focus/anchor
+   notation, so those rules would be dead CSS.
+
+   Shiki's dual-theme output puts the light colour in `color` and the dark one
+   in a `--shiki-dark` custom property on the same span. Switching themes is
+   therefore a CSS swap, not a re-highlight. */
+@layer components {
+  .shiki,
+  .shiki span {
+    font-family: var(--font-mono);
+    background-color: transparent !important;
+  }
+
+  .dark .shiki,
+  .dark .shiki span {
+    color: var(--shiki-dark) !important;
+  }
+
+  pre.shiki {
+    padding-block: 0.625rem;
+    overflow-x: auto;
+  }
+
+  pre.shiki span.line {
+    display: inline-block;
+    width: 100%;
+    padding-inline: 1rem;
   }
 }
 
