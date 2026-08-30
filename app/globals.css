@@ -1,26 +1,229 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+/* ─────────────────────────────────────────────────────────────────────────
+   Magpie design tokens — see docs/design-system.md
+   This file is the ONLY place a hex value may appear.
+   ───────────────────────────────────────────────────────────────────────── */
+
+@theme {
+  /* Neutrals */
+  --color-app: #f8f8fa;
+  --color-surface: #ffffff;
+  --color-subtle: #fafafc;
+  --color-muted: #f4f4f6;
+  --color-hover: #f0f0f2;
+  --color-line: #ededed;
+  --color-line-strong: #dddddd;
+
+  --color-ink: #1c1c1c;
+  --color-ink-2: #232325;
+  --color-ink-muted: #737373;
+  --color-ink-faint: #a0a0a4;
+
+  /* Brand — blue-400 anchors the identity; white carries everything else.
+     400 is the signature hue (accents, sparklines, marks). Solid fills that
+     carry white text step down to 600/700 so labels stay legible. */
+  --color-blue-50: #eff6ff;
+  --color-blue-100: #dbeafe;
+  --color-blue-200: #bfdbfe;
+  --color-blue-300: #93c5fd;
+  --color-blue-400: #60a5fa;
+  --color-blue-500: #3b82f6;
+  --color-blue-600: #2563eb;
+  --color-blue-700: #1d4ed8;
+  --color-orb-from: #2563eb;
+  --color-orb-to: #60a5fa;
+
+  /* Data visualisation — a blue ramp, ordered light to deep, plus a neutral. */
+  --color-viz-1: #2563eb;
+  --color-viz-2: #60a5fa;
+  --color-viz-3: #bfdbfe;
+  --color-viz-4: #1e3a8a;
+  --color-viz-5: #7dd3fc;
+  --color-viz-6: #cbd5e1;
+
+  /* Semantic — deltas only */
+  --color-pos-bg: #d3f9e4;
+  --color-pos-fg: #3e9f69;
+  --color-neg-bg: #ffebee;
+  --color-neg-fg: #c91425;
+
+  /* Label chips — organisational, never semantic */
+  --color-chip-amber: #ffe591;
+  --color-chip-rose: #ffcfcb;
+  --color-chip-graphite: #d8d8d8;
+  --color-chip-sky: #d5eafe;
+  --color-chip-blue: #bfdbfe;
+
+  /* Type */
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-inter-tight), var(--font-inter), ui-sans-serif, sans-serif;
+  /* Trial heading face. Applied to the hero only for now — swap the utility
+     `font-heading` for `font-display` to revert any single heading. */
+  --font-heading: var(--font-hinato), var(--font-inter-tight), ui-sans-serif, sans-serif;
+
+  /* Radius */
+  --radius-panel: 16px;
+  --radius-card: 12px;
+  --radius-control: 8px;
+  --radius-button: 6px;
+  --radius-chip: 5px;
+
+  /* Elevation — hairlines, not shadows */
+  --shadow-e1: 0 1px 2px rgba(16, 16, 20, 0.04);
+  --shadow-e2: 0 1px 3px rgba(16, 16, 20, 0.06), 0 8px 24px rgba(16, 16, 20, 0.04);
+  --shadow-e3: 0 1px 3px rgba(16, 16, 20, 0.07), 0 18px 48px rgba(16, 16, 20, 0.07);
+
+  /* Motion */
+  --ease-out-quint: cubic-bezier(0.2, 0, 0, 1);
+
+  /* ── Learning surface ──────────────────────────────────────────────────
+     A second, deliberately separate visual language for /learning: warm
+     paper, serif headings, mono labels. Long-form reading is not the same
+     task as using a finance tool, and keeping the two visually distinct
+     means nobody ever mistakes a lesson for the product. Used ONLY by
+     components/learning/* and app/learning/*. */
+  --color-paper: #f5f4f2;
+  --color-paper-card: #ffffff;
+  --color-paper-line: #e6e4e0;
+  --color-paper-line-soft: #efedea;
+  --color-paper-ink: #1a1a18;
+  --color-paper-ink-2: #3a3a36;
+  --color-paper-muted: #6f6d67;
+  --color-paper-faint: #9a978f;
+  --color-paper-code: #f2f0ed;
+
+  /* Quiz + callout states — warmer than the product's semantic pair */
+  --color-ok-bg: #eef7f0;
+  --color-ok-line: #bcdcc4;
+  --color-ok-fg: #2f7d4a;
+  --color-no-bg: #fdeff0;
+  --color-no-line: #f2c4c8;
+  --color-no-fg: #b3303c;
+  --color-hint-bg: #fdf6e8;
+  --color-hint-line: #ecdcb8;
+  --color-hint-fg: #8a6b23;
+
+  /* Generic only. A custom property is resolved where it is DECLARED, so if
+     these referenced --font-newsreader (which only exists on the /learning
+     wrapper, not on :root) the whole declaration would be invalid at computed
+     value time and every .font-serif would silently fall back to sans.
+     The real faces are layered on in the scoped block below. */
+  --font-serif: ui-serif, Georgia, serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+@layer base {
+  /* The learning surface upgrades the two generic stacks to the real faces.
+     Scoped here so /learning's fonts are never loaded on the marketing pages. */
+  [data-surface="learning"] {
+    --font-serif: var(--font-newsreader), ui-serif, Georgia, serif;
+    --font-mono: var(--font-jetbrains), ui-monospace, SFMono-Regular, monospace;
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+@layer base {
+  html {
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    scroll-behavior: smooth;
+  }
+
+  body {
+    background-color: var(--color-app);
+    color: var(--color-ink-2);
+    font-family: var(--font-sans);
+    font-feature-settings: "cv11", "ss01";
+  }
+
+  /* Numbers align in columns, everywhere. */
+  .tnum,
+  table,
+  [data-numeric] {
+    font-variant-numeric: tabular-nums;
+  }
+
+  ::selection {
+    background: var(--color-blue-200);
+    color: var(--color-ink);
+  }
+
+  :focus-visible {
+    outline: none;
+    box-shadow:
+      0 0 0 1px var(--color-blue-600),
+      0 0 0 4px var(--color-blue-200);
+    border-radius: var(--radius-button);
+  }
+}
+
+@layer components {
+  /* The one saturated action on a viewport. */
+  .btn-primary {
+    background-color: var(--color-blue-600);
+    color: #fff;
+    border-radius: var(--radius-button);
+    transition: background-color 150ms var(--ease-out-quint);
+  }
+  .btn-primary:hover {
+    background-color: var(--color-blue-700);
+  }
+
+  .btn-secondary {
+    background-color: var(--color-surface);
+    color: var(--color-ink);
+    border: 1px solid var(--color-line-strong);
+    border-radius: var(--radius-button);
+    transition:
+      background-color 150ms var(--ease-out-quint),
+      border-color 150ms var(--ease-out-quint);
+  }
+  .btn-secondary:hover {
+    background-color: var(--color-muted);
+    border-color: #c9c9c9;
+  }
+
+  /* Formula pill — blue because a machine evaluates it. */
+  .formula-pill {
+    background-color: var(--color-blue-100);
+    border: 1px solid var(--color-blue-200);
+    border-radius: var(--radius-chip);
+    color: var(--color-ink-2);
+  }
+
+  /* Hairline grid backdrop used behind hero / CTA. */
+  .grid-lines {
+    background-image:
+      linear-gradient(to right, rgba(28, 28, 28, 0.035) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(28, 28, 28, 0.035) 1px, transparent 1px);
+    background-size: 64px 64px;
+  }
+}
+
+/* Scroll reveal: opacity + 8px rise, once. Nothing else moves. */
+@layer utilities {
+  /* Hidden only when JS is confirmed present (see the head script in layout.tsx).
+     Without it the page renders fully visible rather than blank. */
+  .js .reveal {
+    opacity: 0;
+    transform: translateY(8px);
+    transition:
+      opacity 300ms var(--ease-out-quint),
+      transform 300ms var(--ease-out-quint);
+  }
+  .js .reveal.is-in {
+    opacity: 1;
+    transform: none;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .js .reveal,
+    .js .reveal.is-in {
+      opacity: 1;
+      transform: none;
+      transition: none;
+    }
+    html {
+      scroll-behavior: auto;
+    }
+  }
 }
