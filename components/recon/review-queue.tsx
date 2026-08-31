@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { Check, RotateCcw, Undo2, X } from "lucide-react";
 
 import { cn } from "@/lib/cn";
+import { CashPosition } from "@/components/recon/cash-position";
 import { toIndianDecimal } from "@/lib/recon/money";
 import type { QueueEntry, RunReport } from "@/lib/recon/report";
 import { applyQueueCommand, type QueueCommand, type QueueState } from "@/lib/recon/queue-commands";
@@ -69,6 +70,14 @@ export function ReviewQueue({ report }: { report: RunReport }) {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <Summary report={report} outstanding={outstanding.length} cash={outstandingCash} />
+
+      {/* R6. Above the queue on purpose: the number a controller is protecting comes first,
+          and the list below is the work that moves it. */}
+      {report.cash && (
+        <div className="shrink-0 overflow-y-auto">
+          <CashPosition cash={report.cash} queue={report.queue} state={state} />
+        </div>
+      )}
 
       <div className="flex h-11 shrink-0 items-center justify-between gap-3 border-b border-line px-4">
         <p className="text-[13px] text-ink-muted">

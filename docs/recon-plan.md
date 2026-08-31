@@ -54,9 +54,10 @@
 > is a number that exists before the model does: match rate to 100% and class accuracy to
 > 100%, *only* if precision stays at 100%. That is the §A8 ablation.
 >
-> **R5 is built** — `/recon` renders the queue, grouped by class and sorted by cash impact,
-> with bulk accept/reject per class and undo through a command bus. **R4 is built and
-> unproven.** The adjudication tier, its validation gate and the ablation
+> **R5 and R6 are built** — `/recon` renders the queue grouped by class and sorted by cash
+> impact, with bulk accept/reject and undo through a command bus, above a forward cash
+> position whose unverified band shrinks as the queue is worked. **Every task in this plan is
+> now built except R4's live run**, which has never happened: **R4 is built and unproven.** The adjudication tier, its validation gate and the ablation
 > harness all exist; the gate's ten rejection paths are exercised by `recon:agent --dry-run`
 > with no key and no network. The live path has never run — there is no API key on this
 > machine — so the scoreboard above is still the deterministic one and no claim is made about
@@ -527,14 +528,47 @@ rather than on assumptions.
 forecast. An honest forecast says how much of itself is unverified.
 *Done when:* resolving an exception in R5 visibly moves the cash line in the grid.
 
----
+*Built.* The loop is closed. `lib/recon/cash.ts` derives three monthly series from the match
+results; `lib/recon/cash-model.ts` turns them into a `Model`; `components/recon/cash-position.tsx`
+renders it above the queue.
+
+**The three lines are separate because a controller needs to know which is which.**
+Reconciled is money the bank has confirmed against a settlement. In-flight is money the
+gateway owes — unconfirmed payouts, plus payments whose T+2 date falls past the end of the
+statement. At risk is what the matcher could not resolve, and until someone works the queue
+nobody can say which of the other two it belongs in. Folding the third into the second is
+what makes a forecast unfalsifiable.
+
+**The reconciliation drives the modelling engine rather than a second calculation.** The
+series arrive as `LINKED` variables in the same input table an `INPUT` row would use — §6's
+whole point being that a linked variable is one whose values come from a source instead of a
+person, and nothing downstream can tell. The position rows are ordinary `FORMULA` variables
+over `CUMULATIVE`, evaluated by `lib/model/engine.ts`. So the running total on this screen
+cannot drift from the grid's, and a bug in it is one bug rather than two. That is the return
+on having built the engine before anything needed it.
+
+**Integer paise stop at the module boundary.** The engine's numbers are rupees, and the
+conversion happens in exactly one function in `cash-model.ts` rather than scattered through a
+component.
+
+*Done-when, measured:* the band starts at ₹1,29,93,999 — tying exactly to the queue total —
+falls by an exception's own value when it is resolved, by the class total on a bulk accept,
+and reaches ₹0 when the queue is cleared. **The confirmed position does not move while this
+happens**, which is the behaviour that makes it honest: reviewing removes uncertainty, it does
+not create cash.
+
+*Deliberately not done:* months, not days. `Period` in the modelling engine is month-shaped
+(`docs/modelling-plan.md` §2), and bending it to get a daily cash curve would be shaping the
+engine around one screen. A finer grain is an engine change, taken later and on purpose.
 
 ## 4. Build order and the cut line
 
 ```
 R0 ─► R1 ─► R2 ─► R3 ─► R4 ─► R5 ─► R6
- ✓     ✓     ✓     ✓
+ ✓     ✓     ✓     ✓     ~     ✓     ✓
               stop here and you still have a submission ◄ cleared
+
+              ~ R4 is built; its live path has never run.
 ```
 
 **If time runs short, ship R0–R3 plus a minimal R5.** A deterministic matcher with a real

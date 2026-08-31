@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
+import type { CashSeries } from "./cash";
 import type { FailureClass, Lane } from "./types";
 
 /**
@@ -42,6 +43,8 @@ export type RunReport = {
   lanes: { lane: Lane; matchRate: number; precision: number; falseMatches: number }[];
   ablation: { model: string; verdict: string } | null;
   queue: QueueEntry[];
+  /** R6. Absent on reports written before the cash position existed. */
+  cash?: CashSeries;
 };
 
 /**

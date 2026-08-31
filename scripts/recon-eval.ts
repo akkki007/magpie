@@ -15,6 +15,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { applyAdjudications, gate, packetsFrom } from "../lib/recon/adjudicate";
+import { buildCashSeries } from "../lib/recon/cash";
 import { ingestSources, type SourceName } from "../lib/recon/ingest";
 import { runMatch } from "../lib/recon/match";
 import { toIndianDecimal } from "../lib/recon/money";
@@ -386,6 +387,33 @@ if (process.argv.includes("--with-agent")) {
 
 /* ── The report on disk ───────────────────────────────────────────────────*/
 
+/**
+ * The queue and the cash series, built once and in that order.
+ *
+ * `buildCashSeries` is handed the very array the report will publish, so the per-entry month
+ * it returns is aligned index-for-index with the queue by construction. Deriving the same
+ * sort in two places and trusting them to agree is how a cash line ends up attributing a
+ * ₹14 lakh exception to the wrong month.
+ */
+const queue = run.results
+  .filter((result) => result.outcome !== "AUTO_MATCHED")
+  .sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount))
+  .map((result) => ({
+    lane: result.lane,
+    outcome: result.outcome,
+    rule: result.rule,
+    class: result.class,
+    amount: result.amount,
+    left:
+      result.left.length > 8
+        ? [...result.left.slice(0, 8), `+${result.left.length - 8} more`]
+        : result.left,
+    right: result.right,
+    evidence: result.evidence,
+  }));
+
+const cash = buildCashSeries(batch, run.results, queue);
+
 const report = {
   generatedAt: new Date().toISOString(),
   batch: { dir, seed: truth.seed, rowsIn, records, rejected: batch.rejections.length },
@@ -414,19 +442,8 @@ const report = {
     evidence: entry.result.evidence,
   })),
   ablation,
-  queue: run.results
-    .filter((result) => result.outcome !== "AUTO_MATCHED")
-    .sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount))
-    .map((result) => ({
-      lane: result.lane,
-      outcome: result.outcome,
-      rule: result.rule,
-      class: result.class,
-      amount: result.amount,
-      left: result.left.length > 8 ? [...result.left.slice(0, 8), `+${result.left.length - 8} more`] : result.left,
-      right: result.right,
-      evidence: result.evidence,
-    })),
+  queue,
+  cash,
 };
 
 writeFileSync(out, `${JSON.stringify(report, null, 2)}\n`);
