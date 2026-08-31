@@ -6,6 +6,7 @@ import {
   LayoutGrid,
   LogOut,
   Plus,
+  Scale,
   Table2,
 } from "lucide-react";
 
@@ -22,13 +23,19 @@ import { cn } from "@/lib/cn";
  * coloured one: in this system elevation carries state and colour carries
  * information.
  */
+/**
+ * `href` marks a section that actually exists. The rest are from the prototype and are inert
+ * on purpose — a nav item that looks live and does nothing is worse than one that is visibly
+ * not built yet, and adding a route here before the screen exists is how a dead link ships.
+ */
 const SECTIONS = [
-  { icon: Table2, label: "Models" },
+  { icon: Table2, label: "Models", href: "/workspace" },
+  { icon: Scale, label: "Reconciliation", href: "/recon" },
   { icon: ChartColumn, label: "Dashboards" },
   { icon: Database, label: "Data sources" },
   { icon: BookOpen, label: "Library" },
   { icon: LayoutGrid, label: "Templates" },
-] as const;
+] as const satisfies readonly { icon: typeof Table2; label: string; href?: string }[];
 
 export function Rail({
   active = "Dashboards",
@@ -54,22 +61,31 @@ export function Rail({
         <Plus className="h-[18px] w-[18px]" strokeWidth={1.75} />
       </button>
 
-      {SECTIONS.map(({ icon: Icon, label }) => {
+      {SECTIONS.map((section) => {
+        const { icon: Icon, label } = section;
+        const href = "href" in section ? section.href : undefined;
         const isActive = label === active;
-        return (
-          <button
+        const className = cn(
+          "grid h-9 w-9 place-items-center rounded-control transition-colors",
+          isActive
+            ? "bg-surface text-ink shadow-e1"
+            : "text-ink-faint hover:bg-hover hover:text-ink-muted",
+        );
+        const icon = <Icon className="h-[18px] w-[18px]" strokeWidth={1.75} />;
+
+        return href ? (
+          <Link
             key={label}
-            type="button"
+            href={href}
             aria-label={label}
             aria-current={isActive ? "page" : undefined}
-            className={cn(
-              "grid h-9 w-9 place-items-center rounded-control transition-colors",
-              isActive
-                ? "bg-surface text-ink shadow-e1"
-                : "text-ink-faint hover:bg-hover hover:text-ink-muted",
-            )}
+            className={className}
           >
-            <Icon className="h-[18px] w-[18px]" strokeWidth={1.75} />
+            {icon}
+          </Link>
+        ) : (
+          <button key={label} type="button" aria-label={label} className={className}>
+            {icon}
           </button>
         );
       })}

@@ -54,7 +54,9 @@
 > is a number that exists before the model does: match rate to 100% and class accuracy to
 > 100%, *only* if precision stays at 100%. That is the §A8 ablation.
 >
-> **R4 is built and unproven.** The adjudication tier, its validation gate and the ablation
+> **R5 is built** — `/recon` renders the queue, grouped by class and sorted by cash impact,
+> with bulk accept/reject per class and undo through a command bus. **R4 is built and
+> unproven.** The adjudication tier, its validation gate and the ablation
 > harness all exist; the gate's ten rejection paths are exercised by `recon:agent --dry-run`
 > with no key and no network. The live path has never run — there is no API key on this
 > machine — so the scoreboard above is still the deterministic one and no claim is made about
@@ -474,6 +476,45 @@ trail and undo come free (`docs/modelling-plan.md` §1.3).
 between a demo and a tool.
 **R5.4 — The run summary header** — match rate, records processed, exceptions outstanding,
 live from R3.
+
+*Built.* `/recon` — the rail's second live destination, alongside `/workspace`.
+
+| File | What it is |
+|---|---|
+| `lib/recon/report.ts` | Typed reader for the run report the scoreboard writes |
+| `lib/recon/queue-commands.ts` | The queue's command bus: typed commands, each returning its inverse |
+| `components/recon/review-queue.tsx` | The screen — summary, groups, rows, bulk actions, undo |
+| `app/(app)/recon/page.tsx` | The route, behind auth and behind `connection()` |
+
+Four decisions.
+
+**The screen renders the report; it does not re-run the pipeline.** The matcher decides, the
+scorer measures, the screen renders. A page that re-matched per request would be a fourth
+place the numbers could come from, and the first time it disagreed with `recon:eval` nobody
+would know which to believe.
+
+**`connection()` before reading the file, and this one would have shipped silently.** On
+Next 16 synchronous I/O — `readFileSync` included — completes during *prerendering*, so the
+queue would have been baked into static HTML at build time and every visitor would see
+whichever run happened to be on disk when the build ran. `await connection()` stops
+prerendering at that point and the `<Suspense>` boundary keeps the rest of the shell static.
+The build output confirms it: `ƒ /recon`, server-rendered on demand. A reconciliation screen
+showing a stale exception list is worse than one that is slow.
+
+**Grouping and sorting are the argument, not decoration.** By class, because a controller
+works one kind of problem at a time and thirteen chargeback debits is one decision rather
+than thirteen. By cash impact within the class, because that is the order money gets found
+in. And every row carries the evidence lines the matcher produced — §1.2 exists so a
+reviewer can accept or reject without opening a second file.
+
+**Decisions are in memory, and the screen says so.** Recon has no tables, the same gap M0
+closes for modelling, so a reload resets the queue. Every decision is already a typed command
+carrying its inverse — undo works, and the labels read like an audit trail — so persisting
+them is a storage change rather than a rewrite. Hiding that gap behind a UI that looks
+persistent would be the dishonest option.
+
+*Not built:* reassign (R5.2's third verb) needs somewhere to reassign *to*, which is R4's
+proposal queue once it has run live.
 
 ### R6 — Cash position
 
