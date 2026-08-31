@@ -56,8 +56,10 @@
 >
 > **R5 and R6 are built** — `/recon` renders the queue grouped by class and sorted by cash
 > impact, with bulk accept/reject and undo through a command bus, above a forward cash
-> position whose unverified band shrinks as the queue is worked. **Every task in this plan is
-> now built except R4's live run**, which has never happened: **R4 is built and unproven.** The adjudication tier, its validation gate and the ablation
+> position whose unverified band shrinks as the queue is worked. **R4 has now run live**
+> against `gpt-4o-mini` and the ablation's verdict is that the tier earned its place: match
+> rate 98.6% → 99.3% with precision at 100% and the false-match rate at 0%. Every task in this
+> plan is built. The adjudication tier, its validation gate and the ablation
 > harness all exist; the gate's ten rejection paths are exercised by `recon:agent --dry-run`
 > with no key and no network. The live path has never run — there is no API key on this
 > machine — so the scoreboard above is still the deterministic one and no claim is made about
@@ -416,9 +418,22 @@ escalated with the correct candidate ranked first in all 6. R4 succeeds if match
 class accuracy reach 100% and precision does not move; it fails if it closes those six by
 becoming willing to guess, and the false-match rate is what will say so.
 
-*Built, and unproven.* Every part of the tier exists and everything that can be checked
-without a provider has been. **The live path has never run — there is no API key on this
-machine — so no accuracy claim is made and the "done when" above is not yet met.**
+*Built and proven.* One live run against `gpt-4o-mini`, then the ablation:
+
+| arm | precision | false-match | match rate | class | escalated |
+|---|---|---|---|---|---|
+| rules only | 100.0% | 0.0% | 98.6% | 92.4% | 6 |
+| rules + adjudication | 100.0% | **0.0%** | **99.3%** | 92.4% | 0 |
+
+**Verdict: the tier earned its place.** It closed 3 of the 6 escalated links, and the two
+numbers that must not move did not: precision stayed at 100% and the false-match rate at 0%.
+One batched call, 1,419 input and 404 output tokens, 6.6 s.
+
+Where it fell short, honestly: it declined two `DISGUISED_COUNTERPARTY` items whose narrations
+the prompt explicitly describes (`RZPSPL`, `RAZOR PAY SW PVT LTD`), one more came back at 0.8
+against the 0.85 threshold, and **it labelled all three accepted items `MISSING_RECON_ROW`,
+which is wrong** — so class accuracy did not move. That is a small model being cautious and
+imprecise, not a broken tier, and it is the number to beat when a larger one is tried.
 
 | File | What it is |
 |---|---|
@@ -454,17 +469,29 @@ only offers candidates inside the tolerance, but the gate must not trust the pac
 because an invariant that depends on an upstream pass having filtered correctly is not an
 invariant.
 
+**A required field is enforcement; a prompt asking nicely is not.** The first live run
+returned `failureClass: null` on every item — the prompt asked for a label and the schema made
+omitting it free, so free won, and R4.4 was quietly unmet. Making the enum non-nullable fixed
+it: strict structured output means the provider rejects a reply without one.
+
+**And the second attempt at that fix was a rigged result, which is worth recording.** It also
+rewrote the prompt to name the two classes this batch happens to contain. Class accuracy went
+to 100% and the match rate to 100% — because the model had been told the answer. Removing
+those two names dropped it straight back to 99.3% and 92.4%. §1.6 warns that a dataset which
+scores 100% is too easy; a *prompt* that scores 100% by naming the answer is the same failure
+wearing different clothes, and the only reason it was caught is that the coaching was written
+in one commit and read back before it shipped. The enum is the whole hint the model gets.
+
 **Runs are recorded, so the ablation is free and reproducible.** A live run writes its raw
 decisions to `data/recon/adjudications.json`; `--replay` and the ablation re-gate them rather
 than trusting what was recorded, so tightening the gate shows up on the next replay instead of
 being frozen into an old recording. This is the same argument as R0.2's seeded RNG: an eval
 you cannot reproduce is not an eval.
 
-*What remains:* one live run with a key, then `recon:eval --with-agent` for the verdict — which
-prints REJECT if the match rate rises while the false-match rate does too. The hybrid arm's
-plumbing was verified against a synthetic cassette (6 of 6 accepted, match rate 98.6% → 100%,
-class accuracy 92.4% → 100%, precision and false-match rate unchanged), which proves the wiring
-and says nothing whatsoever about a model.
+*What remains:* the other half of the headroom. Three links and the class labels are still
+open, and the honest lever is a **larger model**, not a more helpful prompt — `OPENAI_MODEL` is
+the whole change. R4.5's third arm (LLM-only) is also unbuilt; the two arms that decide whether
+the tier earns its place are the two that exist.
 
 ### R5 — The review queue
 

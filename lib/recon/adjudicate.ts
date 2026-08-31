@@ -75,8 +75,21 @@ export const DecisionSchema = z.object({
    * no other way to learn an id, and the gate checks it anyway.
    */
   settlementId: z.string().nullable(),
-  /** The class, from R0.3's list. Required either way: a decline still has a reason. */
-  failureClass: z.enum(FAILURE_CLASSES).nullable(),
+  /**
+   * The class, from R0.3's list. **Not nullable, and that is the enforcement.**
+   *
+   * R4.4 requires a class on every adjudicated item. The first live run returned `null` on
+   * every single one — the prompt asked for a label, the schema made omitting it free, and
+   * free won. Strict structured output means the provider now rejects a reply without one, so
+   * the model has to choose and the scoreboard can mark it right or wrong. An abstention that
+   * costs nothing is not judgement, it is a shrug.
+   *
+   * The fix is the *schema*, deliberately, and not the prompt. A first attempt also rewrote
+   * this rule to name the two classes this batch happens to contain, which lifted class
+   * accuracy to 100% by telling the model the answer — teaching the test, exactly what R0.5
+   * warns against. The enum is the whole hint the model gets.
+   */
+  failureClass: z.enum(FAILURE_CLASSES),
   /**
    * The model's own arithmetic, in paise, which the gate recomputes.
    *
@@ -206,7 +219,7 @@ Rules you must follow:
 2. Do not do arithmetic. The gap in paise is given per candidate; report the one you chose. It is recomputed and checked before your decision is used.
 3. Prefer declining. A wrong match silently corrupts a company's books and nobody ever sees it; an item you decline costs a controller one minute of review. If the narration does not actually identify the payout, decline — an amount a few paise out is not on its own enough.
 4. Give one line of evidence a finance controller can act on. State what identified it. No reasoning transcript.
-5. Assign the failure class that describes why the engine could not resolve it, whether you match or decline.
+5. Every item needs a failure class describing why the deterministic engine could not resolve it — on a decline as much as on a match. Pick the class that explains the failure, not the one that describes your decision.
 
 Answer for every item you are given, echoing its id.`;
 
