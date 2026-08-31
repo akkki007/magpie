@@ -9,9 +9,10 @@
 > > **Throughput plus measured accuracy plus an honest exception list. One cherry-picked
 > > match proves nothing.**
 >
-> Status (2026-08-31): **R0, R1 and R2 are built.** `bun run recon:seed` emits a
-> deterministic batch plus its answer key, `bun run recon:ingest --verify` reads it back,
-> and `bun run recon:match` reconciles it with no model involved anywhere:
+> Status (2026-08-31): **R0 through R3 are built** — the cut line in §4 is cleared.
+> `recon:seed` emits a deterministic batch plus its answer key, `recon:ingest --verify`
+> reads it back, `recon:match` reconciles it with no model involved anywhere, and
+> `recon:eval` scores the run against the key:
 >
 > | File | What it is |
 > |---|---|
@@ -27,15 +28,22 @@
 > | `lib/recon/match.ts` | The tiered deterministic matcher and its `MatchResult` |
 > | `scripts/recon-seed.ts` | Seeder, with its own integrity check |
 > | `scripts/recon-ingest.ts` | Rows in / records out / rejected, cross-checked against truth |
+> | `lib/recon/score.ts` | Precision and recall, measured in opposite directions |
 > | `scripts/recon-match.ts` | Per-tier counts, timing, and the exception queue |
+> | `scripts/recon-eval.ts` | The scoreboard, and a self-check that it can fail |
 >
 > Default run: 5,000 payments → **6,172 records** across six files, **61 planted failures
 > across all 13 classes** plus 5 deliberately malformed rows, 431 links to score.
 > Ingestion reads 6,177 rows at ~69k rows/sec and rejects exactly the 5 planted ones.
 > Matching produces **456 results in ~25 ms**: 296 auto-applied, 135 proposed, 25
-> exceptions, and **every one of the 13 planted classes is recovered at its planted count**.
-> The settlement-to-ledger lane is exact — 147 of 147 links, right outcome, right class.
-> **R3 (the scoreboard) is next**, and it is the only command allowed to open `truth.json`.
+> exceptions. `bun run recon:eval` scores that at **100% auto-apply precision, a 0%
+> false-match rate, 100% exception recall and 100% class accuracy (61 of 61)**, with a
+> **68.7% match rate** overall — 100% on both settlement lanes, 8.2% on the payments lane,
+> whose per-settlement assignment is not derivable from the sources at all. All 6,172
+> records end to end in ~112 ms. `--self-check` corrupts the matcher's own output to prove
+> the scoreboard reacts, because an all-green scoreboard and a broken one look identical.
+> **R4 (the agent) is next**, and the escalation rate it inherits is 7.8% of the two
+> derivable lanes — inside the ~5% §6 asks for, once the payments lane is fixed in R0.
 > The modelling engine this ends in is built — `docs/modelling-plan.md`.
 
 ---
@@ -285,6 +293,29 @@ records, p50/p95 latency per escalated record.
 disk.
 *Done when:* one command produces the numbers that go on the submission slide.
 
+*Built.* `bun run recon:eval` prints the headline, a per-lane table, the confusion matrix,
+every false match in full, per-class accuracy, and throughput; it writes
+`data/recon/eval-report.json`, whose `queue` array is what R5 renders.
+
+Three things the build settled:
+
+- **Precision and recall are measured in opposite directions**, and conflating them is how
+  a match rate becomes a lie. Recall walks the answer key and asks what the matcher did
+  with each link; precision walks the auto-applied results and asks whether the key backs
+  them. A link never produced cannot help recall; a result never claimed cannot hurt
+  precision.
+- **Only an `AUTO_MATCHED` result can be a false match.** Scoring a proposal as a wrong
+  answer would punish exactly the abstention §1.3 is built to reward, so a proposal costs
+  recall and can never cost precision. That is the incentive the whole design rests on.
+- **`--self-check` exists because a perfect score is not evidence.** It promotes a wrong
+  proposal to auto-apply, resolves an exception the key expects, and mislabels a correct
+  match, then asserts the scoreboard moves in all three. R1 plants malformed rows for the
+  same reason; a scorer whose failure path never runs is measuring nothing.
+
+The one number to keep watching: **escalation rate**, 35.1% of all results but 7.8% once the
+undecidable payments lane is excluded. §6 wants T3 seeing ~5%, so the tiering is sound and
+the payments lane is a dataset problem — see the finding under R2.
+
 ### R4 — The agent
 
 **R4.1 — Tool schemas from Zod** — `getRecord`, `findCandidates`, `proposeMatch`,
@@ -328,8 +359,8 @@ forecast. An honest forecast says how much of itself is unverified.
 
 ```
 R0 ─► R1 ─► R2 ─► R3 ─► R4 ─► R5 ─► R6
- ✓     ✓     ✓     ▲
-              stop here and you still have a submission
+ ✓     ✓     ✓     ✓
+              stop here and you still have a submission ◄ cleared
 ```
 
 **If time runs short, ship R0–R3 plus a minimal R5.** A deterministic matcher with a real

@@ -16,7 +16,8 @@
     "calc:check": "bun run scripts/calc-check.ts",
     "recon:seed": "bun run scripts/recon-seed.ts",
     "recon:ingest": "bun run scripts/recon-ingest.ts",
-    "recon:match": "bun run scripts/recon-match.ts"
+    "recon:match": "bun run scripts/recon-match.ts",
+    "recon:eval": "bun run scripts/recon-eval.ts"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.10.0",
