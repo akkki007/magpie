@@ -47,3 +47,6 @@ __pycache__/
 
 # ...but the template for it is committed.
 !.env.example
+
+# generated reconciliation fixtures — deterministic, regenerate with `bun run recon:seed`
+/data
