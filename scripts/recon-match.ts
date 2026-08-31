@@ -35,6 +35,7 @@ const SOURCES: SourceName[] = [
   "refunds.csv",
   "chargebacks.csv",
   "settlements.csv",
+  "recon.csv",
   "bank.csv",
   "ledger.csv",
 ];

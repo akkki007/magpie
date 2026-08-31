@@ -93,6 +93,22 @@ const files = [
       ["payment_count", (s) => s.paymentCount],
     ]),
   ),
+  // The file that makes the payments lane a matching problem rather than a guess: one row
+  // per settled entity, naming the payout it landed in.
+  write(
+    "recon.csv",
+    toCsv(batch.recon, [
+      ["entry_id", (row) => row.id],
+      ["settlement_id", (row) => row.settlementId],
+      ["settlement_utr", (row) => row.utr],
+      ["settled_at", (row) => row.settledAt],
+      ["type", (row) => row.type],
+      ["entity_id", (row) => row.entityId],
+      ["amount", (row) => toDecimal(row.amount)],
+      ["fee", (row) => toDecimal(row.fee)],
+      ["tax", (row) => toDecimal(row.tax)],
+    ]),
+  ),
   // The awkward one, on purpose: BOM, dd/mm/yyyy, Indian grouping, commas in the text,
   // and a handful of rows no parser should accept.
   write("bank.csv", corrupt(
@@ -181,9 +197,13 @@ for (const lane of lanes) {
 console.log("\nPlanted failures");
 const order = Object.entries(planted).sort((a, b) => b[1] - a[1]) as [FailureClass, number][];
 for (const [failure, count] of order) {
-  const expect = links.find((link) => link.class === failure)?.expect ?? "—";
+  // A class can be planted in two shapes with two different right answers -- see
+  // MISSING_RECON_ROW in R0.4 -- so showing only the first link's expectation would print a
+  // half-truth about the very thing this table exists to state.
+  const expectations = [...new Set(links.filter((link) => link.class === failure).map((link) => link.expect))];
+  const expect = expectations.length === 0 ? "—" : expectations.sort().join("/");
   console.log(
-    `  ${String(count).padStart(4)}  ${failure.padEnd(22)} ${expect.padEnd(10)} ${FAILURE_LABEL[failure]}`,
+    `  ${String(count).padStart(4)}  ${failure.padEnd(22)} ${expect.padEnd(16)} ${FAILURE_LABEL[failure]}`,
   );
 }
 const plantedTotal = order.reduce((total, [, count]) => total + count, 0);
@@ -231,6 +251,7 @@ function check(batch: Batch): string[] {
     ...batch.payments.map((p) => p.id),
     ...batch.settlements.map((s) => s.id),
     ...batch.bank.map((b) => b.id),
+    ...batch.recon.map((row) => row.id),
     ...journals.keys(),
   ]);
   for (const link of batch.truth.links) {
@@ -246,6 +267,38 @@ function check(batch: Batch): string[] {
       if (seen.has(key)) problems.push(`${id} has two answers in ${link.lane}`);
       seen.add(key);
     }
+  }
+
+  /**
+   * The payments lane now has two link shapes — `left` is the payment set on a match and
+   * empty on an exception — so checking `left` alone stopped being enough. A settlement
+   * holding both a MATCH and an EXCEPTION in that lane would silently mis-score every run,
+   * and it is the exact mistake the new planting could make.
+   */
+  const answered = new Set<string>();
+  for (const link of batch.truth.links) {
+    if (link.lane !== "PAYMENT_TO_SETTLEMENT") continue;
+    for (const id of link.right) {
+      if (answered.has(id)) problems.push(`${id} has two answers in PAYMENT_TO_SETTLEMENT`);
+      answered.add(id);
+    }
+  }
+  for (const settlement of batch.settlements) {
+    if (!answered.has(settlement.id)) {
+      problems.push(`${settlement.id} has no answer in PAYMENT_TO_SETTLEMENT`);
+    }
+  }
+
+  /* Every recon row must point at a settlement and an entity that exist. */
+  const settlementIds = new Set(batch.settlements.map((s) => s.id));
+  const entityIds = new Set<string>([
+    ...batch.payments.map((p) => p.id),
+    ...batch.refunds.map((r) => r.id),
+    ...batch.chargebacks.map((c) => c.id),
+  ]);
+  for (const row of batch.recon) {
+    if (!settlementIds.has(row.settlementId)) problems.push(`recon row ${row.id} names unknown settlement ${row.settlementId}`);
+    if (!entityIds.has(row.entityId)) problems.push(`recon row ${row.id} names unknown entity ${row.entityId}`);
   }
 
   return problems;

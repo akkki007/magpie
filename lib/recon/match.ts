@@ -11,7 +11,13 @@ import {
   partitionIsTractable,
   windowAround,
 } from "./candidates";
-import { CONFIDENCE, TOLERANCES, addDays, type Tolerances } from "./tolerance";
+import {
+  CONFIDENCE,
+  TOLERANCES,
+  addDays,
+  expectedSettlementDate,
+  type Tolerances,
+} from "./tolerance";
 import type {
   BankCredit,
   Chargeback,
@@ -19,6 +25,7 @@ import type {
   Lane,
   LedgerEntry,
   Payment,
+  ReconRow,
   Settlement,
 } from "./types";
 
@@ -106,6 +113,7 @@ export type MatchRun = {
 export type MatchInput = {
   payments: Payment[];
   settlements: Settlement[];
+  recon: ReconRow[];
   bank: BankCredit[];
   ledger: LedgerEntry[];
   chargebacks: Chargeback[];
@@ -166,9 +174,9 @@ export function runMatch(input: MatchInput, config: Tolerances = TOLERANCES): Ma
  * ```
  *   T0  the statement says which settlement it is, and the amount agrees
  *   T1  the statement says which settlement it is, and the amount is explainably off
- *   T0  a debit that no payout claimed, which is a deduction rather than a settlement
  *   T1  the statement almost says which settlement it is (a transposed reference)
  *   T1  the statement says nothing, and a unique amount and date have to carry it
+ *   T1  a debit no payout claimed, which is a deduction rather than a settlement
  *   T2  one settlement paid as several credits, or one credit covering several
  *   T4  nothing explains it, so say so with a reason
  * ```
@@ -388,52 +396,6 @@ function matchBankLane(
     }
   }
 
-  /* ── T0, step 3: debits that no payout explains ─────────────────────────*/
-
-  /**
-   * Deliberately *after* the reference passes, and this order was a bug once.
-   *
-   * The obvious rule is "a settlement is money coming in, so a debit cannot be one". It is
-   * wrong. When a day's refunds exceed its payout the gateway settles a **negative** amount
-   * and the bank row is a debit — carrying the correct UTR, tying to the paisa. Claiming
-   * every debit up front turned two perfectly matchable settlements into two exceptions
-   * *and* two orphan bank rows, which is the exact shape of a matcher that looks accurate
-   * because it never had to admit what it broke.
-   *
-   * So the sign of the amount is not evidence of anything on its own. What is left after
-   * the reference passes have had their turn genuinely belongs to nothing.
-   */
-
-  const chargebackById = new Map(input.chargebacks.map((c) => [c.id.toUpperCase(), c]));
-
-  for (const credit of input.bank) {
-    if (!isOpenCredit(credit) || credit.amount >= 0) continue;
-    const narration = credit.description.toUpperCase();
-    const referenced = [...narration.matchAll(/DISP_[A-Z0-9]+/g)].map((m) => m[0]);
-    const dispute = referenced.map((id) => chargebackById.get(id)).find(Boolean);
-    const isChargeback = narration.includes("CHARGEBACK") || dispute !== undefined;
-
-    settle([], [credit]);
-    emit({
-      lane,
-      tier: "T0",
-      rule: "T0_STANDALONE_DEBIT",
-      outcome: "EXCEPTION",
-      confidence: CONFIDENCE.REFERENCE_EXACT,
-      left: [],
-      right: [credit.id],
-      inputs: dispute ? [credit.id, dispute.id] : [credit.id],
-      evidence: [
-        `${money(-credit.amount)} debited on ${credit.valueDate}, and no unmatched settlement was paid out as a debit of that value`,
-        dispute
-          ? `narration names dispute ${dispute.id}, raised ${dispute.raisedAt} for ${money(dispute.amount)}${dispute.amount === -credit.amount ? " — the amount ties exactly" : ` — ${delta(-credit.amount, dispute.amount)}`}`
-          : `narration: ${credit.description}`,
-      ],
-      class: isChargeback ? "CHARGEBACK_DEDUCTION" : null,
-      amount: credit.amount,
-    });
-  }
-
   /* ── T1, step 3: a reference one typo away ──────────────────────────────*/
 
   /**
@@ -447,7 +409,10 @@ function matchBankLane(
    * evidence.
    */
   for (const credit of input.bank) {
-    if (!isOpenCredit(credit) || credit.amount <= 0) continue;
+    // Not `> 0`: a payout whose refunds exceeded its takings is a negative settlement paid
+    // out as a bank debit, and it can carry a transposed reference like any other. Filtering
+    // on sign here hid exactly that case behind the debit pass below.
+    if (!isOpenCredit(credit) || credit.amount === 0) continue;
     const reference = normaliseReference(credit.reference);
     if (reference.length < config.reference.minLength) continue;
 
@@ -507,7 +472,7 @@ function matchBankLane(
    * that as the worst failure in the system.
    */
   for (const credit of input.bank) {
-    if (!isOpenCredit(credit) || credit.amount <= 0) continue;
+    if (!isOpenCredit(credit) || credit.amount === 0) continue;
     if (normaliseReference(credit.reference) !== "") continue;
 
     const window = { from: addDays(credit.valueDate, -config.bank.lateDays), to: credit.valueDate };
@@ -547,12 +512,68 @@ function matchBankLane(
     });
   }
 
+  /* ── T1, step 6: debits that no payout explains ─────────────────────────*/
+
+  /**
+   * Deliberately *after* the reference passes, and this order was a bug once.
+   *
+   * The obvious rule is "a settlement is money coming in, so a debit cannot be one". It is
+   * wrong. When a day's refunds exceed its payout the gateway settles a **negative** amount
+   * and the bank row is a debit — carrying the correct UTR, tying to the paisa. Claiming
+   * every debit up front turned two perfectly matchable settlements into two exceptions
+   * *and* two orphan bank rows, which is the exact shape of a matcher that looks accurate
+   * because it never had to admit what it broke.
+   *
+   * So the sign of the amount is not evidence of anything on its own. What is left after
+   * the reference passes have had their turn genuinely belongs to nothing.
+   *
+   * This bit twice, and the second time the fix was in the wrong place. Dropping the
+   * `amount > 0` guard from the near-miss pass achieved nothing while this block still ran
+   * *before* it — the debit was already claimed by the time the pass that could explain it
+   * got a turn. So the rule is not just "sign is not evidence" but **"a catch-all runs
+   * last"**: this now sits after every pass that could legitimately claim a debit, and the
+   * only pass after it assumes positive amounts and says so.
+   */
+
+  const chargebackById = new Map(input.chargebacks.map((c) => [c.id.toUpperCase(), c]));
+
+  for (const credit of input.bank) {
+    if (!isOpenCredit(credit) || credit.amount >= 0) continue;
+    const narration = credit.description.toUpperCase();
+    const referenced = [...narration.matchAll(/DISP_[A-Z0-9]+/g)].map((m) => m[0]);
+    const dispute = referenced.map((id) => chargebackById.get(id)).find(Boolean);
+    const isChargeback = narration.includes("CHARGEBACK") || dispute !== undefined;
+
+    settle([], [credit]);
+    emit({
+      lane,
+      tier: "T0",
+      rule: "T0_STANDALONE_DEBIT",
+      outcome: "EXCEPTION",
+      confidence: CONFIDENCE.REFERENCE_EXACT,
+      left: [],
+      right: [credit.id],
+      inputs: dispute ? [credit.id, dispute.id] : [credit.id],
+      evidence: [
+        `${money(-credit.amount)} debited on ${credit.valueDate}, and no unmatched settlement was paid out as a debit of that value`,
+        dispute
+          ? `narration names dispute ${dispute.id}, raised ${dispute.raisedAt} for ${money(dispute.amount)}${dispute.amount === -credit.amount ? " — the amount ties exactly" : ` — ${delta(-credit.amount, dispute.amount)}`}`
+          : `narration: ${credit.description}`,
+      ],
+      class: isChargeback ? "CHARGEBACK_DEDUCTION" : null,
+      amount: credit.amount,
+    });
+  }
+
   /* ── T2, step 5: one settlement, several credits ────────────────────────*/
 
   for (const settlement of input.settlements) {
     if (!isOpenSettlement(settlement)) continue;
 
     const anchors = referencedCredits(settlement);
+    // Unlike the passes above, the structural search is positive-only by construction:
+    // subset-sum over mixed signs is a different (and unbounded) problem, and a negative
+    // payout split across two debits is not a thing gateways do.
     const window = windowAround(settlement.settledAt, 0, config.bank.splitSpanDays);
     const pool = bankIndex
       .inWindow(window.from, window.to)
@@ -953,24 +974,27 @@ function matchLedgerLane(
 /* ── Lane 3 of 3: payments against settlements ────────────────────────────*/
 
 /**
- * The lane with no reference anywhere, and the one worth being honest about.
+ * The lane that used to be a guess.
  *
- * The payments export carries no settlement id — deliberately, because that is how the two
- * files arrive in real life. So the only thing connecting them is the payout calendar:
- * every payment captured on T should appear in a payout on T+2, weekends skipped.
+ * Before the settlement recon report existed, the only thing joining payments to payouts
+ * was the payout calendar — which proves a *date* ties out and can never say which of eight
+ * same-day payouts a payment belongs to. The matcher recovered 12 of 147 links and honestly
+ * reported the rest as undecidable. That was correct behaviour and a permanently capped
+ * number, so R0 grew the file Razorpay actually publishes.
  *
- * That gets you a **tie-out**, which is genuinely valuable: for each payout date, the
- * count and the value of the payments must equal the count and value the settlements
- * claim, to the paisa. What it does not get you is an **assignment**. When one date carries
- * three settlements of 40, 40 and 3 payments, the small one can be recovered by exact
- * cardinality-constrained subset-sum and the last one by elimination, but choosing which
- * 40 of the remaining 80 payments belong to which of two identical-sized batches is
- * information that simply is not in these files — about 10^23 combinations, all of which
- * the arithmetic accepts.
+ * Now the lane has a reference like the other two, and the calendar has a better job:
  *
- * So this lane proposes rather than asserts, and says why. That is §1.3 working as
- * intended: an unresolvable assignment reported as an ambiguity costs a controller a
- * click, and reported as a match corrupts every downstream number silently.
+ * ```
+ *   T0  the recon report itemises the payout, and count, gross, fee and tax all tie
+ *   T2  the report omits this payout, but every other payout that day is itemised,
+ *       so its payments are the exact remainder — recovered by elimination
+ *   T4  the report omits it and something else on the same day too, so nothing
+ *       can tell them apart
+ * ```
+ *
+ * The calendar is still computed on every match, as an *independent* second derivation. Two
+ * different routes agreeing is much stronger evidence than either alone, and it costs a
+ * hash lookup.
  */
 function matchPaymentLane(
   input: MatchInput,
@@ -980,178 +1004,238 @@ function matchPaymentLane(
   counters: { nodes: number },
 ) {
   const lane: Lane = "PAYMENT_TO_SETTLEMENT";
+  const paymentById = new Map(input.payments.map((payment) => [payment.id, payment]));
   const pools = groupPaymentsByPayoutDate(input.payments, config);
 
-  const settlementsByDate = new Map<string, Settlement[]>();
-  for (const settlement of input.settlements) {
-    const bucket = settlementsByDate.get(settlement.settledAt);
-    if (bucket) bucket.push(settlement);
-    else settlementsByDate.set(settlement.settledAt, [settlement]);
+  const rowsBySettlement = new Map<string, ReconRow[]>();
+  for (const row of input.recon) {
+    const bucket = rowsBySettlement.get(row.settlementId);
+    if (bucket) bucket.push(row);
+    else rowsBySettlement.set(row.settlementId, [row]);
   }
 
-  const dates = [...new Set([...pools.keys(), ...settlementsByDate.keys()])].sort();
+  /** Every payment the report attributes to *some* payout, for the elimination pass. */
+  const itemised = new Set<string>();
+  for (const row of input.recon) if (row.type === "payment") itemised.add(row.entityId);
 
-  for (const date of dates) {
-    const pool = pools.get(date) ?? [];
-    const settlements = [...(settlementsByDate.get(date) ?? [])].sort(
-      (a, b) => a.paymentCount - b.paymentCount || (a.id < b.id ? -1 : 1),
-    );
+  /**
+   * How many of a payout's payments the payout calendar independently agrees with.
+   *
+   * Corroboration, never a filter. If T+2 and the report disagree, the report wins — it is
+   * the authoritative document — but the disagreement is worth a line of evidence, because
+   * a report that contradicts the calendar is a report worth a second look.
+   */
+  const calendarAgreement = (settlement: Settlement, batch: Payment[]) =>
+    batch.filter(
+      (payment) => expectedSettlementDate(payment.capturedAt, config) === settlement.settledAt,
+    ).length;
 
-    if (settlements.length === 0) {
-      emit({
-        lane,
-        tier: "T4",
-        rule: "T4_PAYMENTS_NEVER_SETTLED",
-        outcome: "EXCEPTION",
-        confidence: 0,
-        left: pool.map((p) => p.id),
-        right: [],
-        inputs: cappedInputs(pool.map((p) => p.id)),
-        evidence: [
-          `${pool.length} payments worth ${money(pool.reduce((t, p) => t + p.gross, 0))} were due for payout on ${date} and no settlement was reported that day`,
-        ],
-        class: null,
-        amount: pool.reduce((total, payment) => total + payment.gross, 0),
-      });
+  const unreported: Settlement[] = [];
+
+  /* ── T0: the recon report itemises the payout ───────────────────────────*/
+
+  for (const settlement of input.settlements) {
+    const rows = rowsBySettlement.get(settlement.id) ?? [];
+    if (rows.length === 0) {
+      unreported.push(settlement);
       continue;
     }
 
-    const poolGross = pool.reduce((total, payment) => total + payment.gross, 0);
-    const poolFees = pool.reduce((total, payment) => total + payment.fee, 0);
-    const poolTax = pool.reduce((total, payment) => total + payment.tax, 0);
-    const claimedGross = settlements.reduce((total, s) => total + s.gross, 0);
-    const claimedCount = settlements.reduce((total, s) => total + s.paymentCount, 0);
-    const tiesOut =
-      poolGross === claimedGross &&
-      pool.length === claimedCount &&
-      poolFees === settlements.reduce((total, s) => total + s.fees, 0) &&
-      poolTax === settlements.reduce((total, s) => total + s.tax, 0);
+    const paymentRows = rows.filter((row) => row.type === "payment");
+    const batch: Payment[] = [];
+    const unknown: ReconRow[] = [];
+    for (const row of paymentRows) {
+      const payment = paymentById.get(row.entityId);
+      if (payment) batch.push(payment);
+      else unknown.push(row);
+    }
 
-    const tieEvidence = tiesOut
-      ? `the payout date ties out in full: ${pool.length} payments, gross ${money(poolGross)}, fees ${money(poolFees)}, GST ${money(poolTax)} — all four agree with what the settlements claim`
-      : `the payout date does NOT tie out: ${pool.length} payments worth ${money(poolGross)} against ${claimedCount} claimed worth ${money(claimedGross)}`;
+    const gross = batch.reduce((total, payment) => total + payment.gross, 0);
+    const fees = batch.reduce((total, payment) => total + payment.fee, 0);
+    const tax = batch.reduce((total, payment) => total + payment.tax, 0);
+    const deductions = rows
+      .filter((row) => row.type !== "payment")
+      .reduce((total, row) => total - row.amount, 0);
 
-    /* One settlement on the date: the pool is the answer, no search needed. */
-    if (settlements.length === 1) {
-      const settlement = settlements[0];
+    const countTies = batch.length === settlement.paymentCount;
+    const grossTies = gross === settlement.gross;
+    const feesTie = fees === settlement.fees;
+    const taxTies = tax === settlement.tax;
+    const utrDisagrees = rows.filter(
+      (row) => normaliseReference(row.utr) !== normaliseReference(settlement.utr),
+    ).length;
+    const agreed = calendarAgreement(settlement, batch);
+
+    if (countTies && grossTies && feesTie && taxTies && unknown.length === 0) {
       emit({
         lane,
         tier: "T0",
-        rule: "T0_SOLE_PAYOUT_OF_DAY",
-        outcome: tiesOut ? applied(CONFIDENCE.DATE_POOL_UNIQUE) : "PROPOSED",
-        confidence: tiesOut ? CONFIDENCE.DATE_POOL_UNIQUE : CONFIDENCE.AMBIGUOUS,
-        left: pool.map((p) => p.id),
+        rule: "T0_RECON_REPORT",
+        outcome: applied(CONFIDENCE.REFERENCE_EXACT),
+        confidence: CONFIDENCE.REFERENCE_EXACT,
+        left: batch.map((payment) => payment.id),
         right: [settlement.id],
-        inputs: cappedInputs(pool.map((p) => p.id)),
+        inputs: cappedInputs([settlement.id, ...rows.map((row) => row.id)]),
         evidence: [
-          `${pool.length} payments captured on ${[...new Set(pool.map((p) => p.capturedAt))].sort().join(", ")} are due for payout on ${date} under T+${config.settlement.delayDays}`,
-          tieEvidence,
-          `it is the only settlement paid that day, so no assignment is needed`,
+          `the recon report itemises ${paymentRows.length} payments against this payout under UTR ${settlement.utr}`,
+          `count, gross ${money(gross)}, fees ${money(fees)} and GST ${money(tax)} all tie to the settlement report exactly`,
+          agreed === batch.length
+            ? `the T+${config.settlement.delayDays} payout calendar independently puts all ${batch.length} of them on ${settlement.settledAt}`
+            : `the payout calendar puts only ${agreed} of ${batch.length} on ${settlement.settledAt} — the report is authoritative, but that disagreement is worth a look`,
+          ...(deductions > 0
+            ? [`${money(deductions)} of refunds and disputes are itemised against the same payout`]
+            : []),
+          ...(utrDisagrees > 0 ? [`${utrDisagrees} row(s) carry a different UTR than the settlement`] : []),
         ],
         class: null,
-        amount: poolGross,
+        amount: settlement.gross,
       });
       continue;
     }
 
-    /* Several settlements: recover what the arithmetic can, and abstain on the rest. */
-    let remaining = [...pool];
-    const unresolved: Settlement[] = [];
-    let capHitOnDate = false;
+    /**
+     * The report mentions the payout and does not add up. Note the shape of the failure
+     * precisely, because `MISATTRIBUTED_PAYMENT` is the dangerous one: the count still
+     * ties, so a matcher that checks cardinality and not value accepts it silently.
+     */
+    const misattributed = countTies && unknown.length === 0 && !grossTies;
+    emit({
+      lane,
+      tier: "T4",
+      rule: misattributed ? "T4_RECON_VALUE_DOES_NOT_TIE" : "T4_RECON_DOES_NOT_TIE",
+      outcome: "EXCEPTION",
+      confidence: 0,
+      left: [],
+      right: [settlement.id],
+      inputs: cappedInputs([settlement.id, ...rows.map((row) => row.id)]),
+      evidence: misattributed
+        ? [
+            `the recon report itemises exactly the ${settlement.paymentCount} payments this payout claims, and they total ${money(gross)} against a reported gross of ${money(settlement.gross)} — ${delta(gross, settlement.gross)}`,
+            `the count is right and the value is not, so a payment has been itemised against the wrong payout`,
+            `every payment listed exists and settles on ${settlement.settledAt}, so nothing here is missing — only misfiled`,
+          ]
+        : [
+            `the recon report does not reconcile to the settlement report`,
+            `${batch.length} payments itemised against ${settlement.paymentCount} claimed, totalling ${money(gross)} against ${money(settlement.gross)}`,
+            ...(unknown.length > 0
+              ? [`${unknown.length} row(s) name a payment that is not in the payments export: ${unknown.slice(0, 3).map((row) => row.entityId).join(", ")}`]
+              : []),
+            ...(feesTie ? [] : [`fees ${money(fees)} against ${money(settlement.fees)}`]),
+            ...(taxTies ? [] : [`GST ${money(tax)} against ${money(settlement.tax)}`]),
+          ],
+      class: misattributed ? "MISATTRIBUTED_PAYMENT" : null,
+      amount: settlement.gross,
+    });
+  }
 
-    for (let i = 0; i < settlements.length; i++) {
-      const settlement = settlements[i];
-      const others = settlements.length - unresolved.length - i;
+  /* ── The payouts the report never mentions ──────────────────────────────*/
 
-      /* Last one standing: whatever is left is its batch, if the totals agree. */
-      if (others === 1 && unresolved.length === 0) {
-        if (
-          remaining.length === settlement.paymentCount &&
-          remaining.reduce((total, p) => total + p.gross, 0) === settlement.gross
-        ) {
-          emit({
-            lane,
-            tier: "T2",
-            rule: "T2_PAYMENT_BATCH_BY_ELIMINATION",
-            outcome: applied(CONFIDENCE.BY_ELIMINATION),
-            confidence: CONFIDENCE.BY_ELIMINATION,
-            left: remaining.map((p) => p.id),
-            right: [settlement.id],
-            inputs: cappedInputs(remaining.map((p) => p.id)),
-            evidence: [
-              `every other settlement paid on ${date} has been assigned, leaving ${remaining.length} payments`,
-              `they number exactly ${settlement.paymentCount} and total ${money(settlement.gross)} — count and value both tie`,
-              tieEvidence,
-            ],
-            class: null,
-            amount: settlement.gross,
-          });
-          remaining = [];
-          continue;
-        }
-      }
+  if (unreported.length === 0) return;
 
-      if (!partitionIsTractable(remaining.length, settlement.paymentCount, config)) {
-        unresolved.push(settlement);
-        capHitOnDate = true;
-        continue;
-      }
+  const unreportedByDate = new Map<string, Settlement[]>();
+  for (const settlement of unreported) {
+    const bucket = unreportedByDate.get(settlement.settledAt);
+    if (bucket) bucket.push(settlement);
+    else unreportedByDate.set(settlement.settledAt, [settlement]);
+  }
 
+  for (const date of [...unreportedByDate.keys()].sort()) {
+    const missing = [...unreportedByDate.get(date)!].sort(
+      (a, b) => a.paymentCount - b.paymentCount || (a.id < b.id ? -1 : 1),
+    );
+
+    /* The remainder: payments due for payout that day that the report never placed. */
+    let remaining = (pools.get(date) ?? []).filter((payment) => !itemised.has(payment.id));
+    const claimedCount = missing.reduce((total, s) => total + s.paymentCount, 0);
+    const claimedGross = missing.reduce((total, s) => total + s.gross, 0);
+    const remainingGross = remaining.reduce((total, payment) => total + payment.gross, 0);
+    const tiesOut = remaining.length === claimedCount && remainingGross === claimedGross;
+
+    const tieEvidence = tiesOut
+      ? `the remainder ties out: ${remaining.length} payments worth ${money(remainingGross)} are due for payout on ${date} and unplaced by the report, against ${claimedCount} worth ${money(claimedGross)} claimed`
+      : `the remainder does NOT tie out: ${remaining.length} unplaced payments worth ${money(remainingGross)} against ${claimedCount} claimed worth ${money(claimedGross)}`;
+
+    /* One omission on the date: the remainder is the answer, and nothing had to be chosen. */
+    if (missing.length === 1 && tiesOut) {
+      const settlement = missing[0];
+      emit({
+        lane,
+        tier: "T2",
+        rule: "T2_RECON_BY_ELIMINATION",
+        outcome: applied(CONFIDENCE.BY_ELIMINATION),
+        confidence: CONFIDENCE.BY_ELIMINATION,
+        left: remaining.map((payment) => payment.id),
+        right: [settlement.id],
+        inputs: cappedInputs([settlement.id, ...remaining.map((payment) => payment.id)]),
+        evidence: [
+          `the recon report has no rows for this payout at all`,
+          `every other payout on ${date} is itemised, so its payments are exactly what is left over`,
+          tieEvidence,
+          `count and gross both tie to the paisa, so no combination had to be chosen`,
+        ],
+        class: "MISSING_RECON_ROW",
+        amount: settlement.gross,
+      });
+      continue;
+    }
+
+    /* Several omissions: try the arithmetic, and say plainly when it cannot decide. */
+    const resolved = new Set<string>();
+    for (const settlement of missing) {
+      if (!partitionIsTractable(remaining.length, settlement.paymentCount, config)) continue;
       const search = findSubsets(remaining, (payment) => payment.gross, settlement.gross, {
         maxSize: settlement.paymentCount,
         exactSize: settlement.paymentCount,
         maxNodes: config.search.maxNodes,
       });
       counters.nodes += search.nodes;
-      capHitOnDate = capHitOnDate || search.capHit;
+      if (search.subsets.length !== 1) continue;
 
-      if (search.subsets.length === 1) {
-        const batch = search.subsets[0];
-        emit({
-          lane,
-          tier: "T2",
-          rule: "T2_PAYMENT_BATCH_SUBSET_SUM",
-          outcome: applied(CONFIDENCE.PAYMENT_PARTITION),
-          confidence: CONFIDENCE.PAYMENT_PARTITION,
-          left: batch.map((p) => p.id),
-          right: [settlement.id],
-          inputs: cappedInputs(remaining.map((p) => p.id)),
-          evidence: [
-            `exactly one set of ${settlement.paymentCount} payments out of the ${remaining.length} due on ${date} totals ${money(settlement.gross)}`,
-            `count and value both tie to the paisa, and no other combination of that size does`,
-            tieEvidence,
-          ],
-          class: null,
-          amount: settlement.gross,
-        });
-        const taken = new Set(batch);
-        remaining = remaining.filter((payment) => !taken.has(payment));
-        continue;
-      }
-
-      unresolved.push(settlement);
-    }
-
-    for (const settlement of unresolved) {
+      const batch = search.subsets[0];
       emit({
         lane,
         tier: "T2",
-        rule: "T2_PAYMENT_BATCH_AMBIGUOUS",
-        outcome: "PROPOSED",
-        confidence: CONFIDENCE.DATE_POOL_TIED,
-        left: remaining.map((p) => p.id),
+        rule: "T2_RECON_SUBSET_SUM",
+        outcome: applied(CONFIDENCE.PAYMENT_PARTITION),
+        confidence: CONFIDENCE.PAYMENT_PARTITION,
+        left: batch.map((payment) => payment.id),
         right: [settlement.id],
-        inputs: cappedInputs(remaining.map((p) => p.id)),
+        inputs: cappedInputs([settlement.id, ...remaining.map((payment) => payment.id)]),
         evidence: [
+          `the recon report has no rows for this payout`,
+          `exactly one set of ${settlement.paymentCount} payments out of the ${remaining.length} unplaced on ${date} totals ${money(settlement.gross)}, and no other combination of that size does`,
           tieEvidence,
-          `${unresolved.length} settlements paid on ${date} share ${remaining.length} candidate payments, and this one claims ${settlement.paymentCount} of them worth ${money(settlement.gross)}`,
-          capHitOnDate
-            ? `choosing ${settlement.paymentCount} of ${remaining.length} is beyond the search cap, and the sources carry no settlement id on a payment — the assignment is not derivable from this data`
-            : `no unique set of ${settlement.paymentCount} payments totals ${money(settlement.gross)}`,
         ],
-        class: null,
+        class: "MISSING_RECON_ROW",
         amount: settlement.gross,
-        capHit: capHitOnDate || undefined,
+      });
+      resolved.add(settlement.id);
+      const taken = new Set(batch);
+      remaining = remaining.filter((payment) => !taken.has(payment));
+    }
+
+    for (const settlement of missing) {
+      if (resolved.has(settlement.id)) continue;
+      emit({
+        lane,
+        tier: "T4",
+        rule: "T4_NOT_ITEMISED",
+        outcome: "EXCEPTION",
+        confidence: 0,
+        left: [],
+        right: [settlement.id],
+        inputs: cappedInputs([settlement.id, ...remaining.map((payment) => payment.id)]),
+        evidence: [
+          `the recon report has no rows for this payout, and ${missing.length - 1} other payout(s) on ${date} are missing from it too`,
+          ...(resolved.size > 0
+            ? [`${resolved.size} of them were recovered by exact subset-sum; this one was not`]
+            : []),
+          tieEvidence,
+          `splitting ${remaining.length} unplaced payments across ${missing.length} payouts of ${missing.map((s) => s.paymentCount).join(" and ")} is not derivable from these sources — the report is the only document that says which is which`,
+          `the money is accounted for; the attribution is not. Ask for a complete recon report.`,
+        ],
+        class: "MISSING_RECON_ROW",
+        amount: settlement.gross,
       });
     }
   }

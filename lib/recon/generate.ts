@@ -8,6 +8,7 @@ import type {
   LedgerEntry,
   Payment,
   PaymentMethod,
+  ReconRow,
   Refund,
   Settlement,
   TruthLink,
@@ -68,6 +69,10 @@ const PLANT_SHARE: Record<FailureClass, number> = {
   REFUND_NETTED: 0.03,
   FEE_NOT_BOOKED: 0.03,
   MISSING_LEDGER_ENTRY: 0.02,
+  // Both of these damage the recon report rather than the bank or the books, so they are
+  // the only two classes that can touch the payments lane.
+  MISSING_RECON_ROW: 0.03,
+  MISATTRIBUTED_PAYMENT: 0.02,
   DUPLICATE_CREDIT: 0.015,
   FOREIGN_CREDIT: 0.02,
   CHARGEBACK_DEDUCTION: 0.5, // share of chargebacks, not of settlements
@@ -244,11 +249,20 @@ export function generateBatch(options: Partial<GenerateOptions> = {}): Batch {
     return later ? settlementsByDate.get(later)![0] : undefined;
   };
 
+  /** settlementId → the refunds and disputes netted out of it, for the recon report. */
+  const deductionsOf = new Map<string, { type: "refund" | "chargeback"; id: string; amount: Paise }[]>();
+  const deduct = (settlementId: string, entry: { type: "refund" | "chargeback"; id: string; amount: Paise }) => {
+    const bucket = deductionsOf.get(settlementId);
+    if (bucket) bucket.push(entry);
+    else deductionsOf.set(settlementId, [entry]);
+  };
+
   for (const refund of refunds) {
     const target = attach(iso(settlementTime(Date.parse(`${refund.createdAt}T00:00:00Z`))));
     if (!target) continue;
     target.refunds += refund.amount;
     target.net -= refund.amount;
+    deduct(target.id, { type: "refund", id: refund.id, amount: refund.amount });
   }
 
   for (const chargeback of chargebacks) {
@@ -257,6 +271,43 @@ export function generateBatch(options: Partial<GenerateOptions> = {}): Batch {
     if (!target) continue;
     target.chargebacks += chargeback.amount;
     target.net -= chargeback.amount;
+    deduct(target.id, { type: "chargeback", id: chargeback.id, amount: chargeback.amount });
+  }
+
+  /* 3b ─ The settlement recon report: one row per settled entity.
+        Written from the mapping the generator already knows, which is precisely the
+        mapping the matcher has to rediscover. */
+  const paymentById = new Map(payments.map((payment) => [payment.id, payment]));
+  const recon: ReconRow[] = [];
+
+  for (const settlement of settlements) {
+    for (const paymentId of settlementPayments.get(settlement.id)!) {
+      const payment = paymentById.get(paymentId)!;
+      recon.push({
+        id: id(r, "rcn", 9),
+        settlementId: settlement.id,
+        utr: settlement.utr,
+        settledAt: settlement.settledAt,
+        type: "payment",
+        entityId: payment.id,
+        amount: payment.gross,
+        fee: payment.fee,
+        tax: payment.tax,
+      });
+    }
+    for (const deduction of deductionsOf.get(settlement.id) ?? []) {
+      recon.push({
+        id: id(r, "rcn", 9),
+        settlementId: settlement.id,
+        utr: settlement.utr,
+        settledAt: settlement.settledAt,
+        type: deduction.type,
+        entityId: deduction.id,
+        amount: -deduction.amount,
+        fee: 0,
+        tax: 0,
+      });
+    }
   }
 
   /* 4 ─ The clean bank statement and the clean ledger. */
@@ -296,6 +347,8 @@ export function generateBatch(options: Partial<GenerateOptions> = {}): Batch {
   const planted = plant({
     r,
     settlements,
+    recon,
+    settlementPayments,
     bank,
     ledger,
     creditsOf,
@@ -306,6 +359,7 @@ export function generateBatch(options: Partial<GenerateOptions> = {}): Batch {
 
   /* 6 ─ The answer key, written from what actually happened above. */
   for (const settlement of settlements) {
+    if (planted.reconTouched.has(settlement.id)) continue;
     links.push({
       lane: "PAYMENT_TO_SETTLEMENT",
       left: settlementPayments.get(settlement.id)!,
@@ -345,6 +399,7 @@ export function generateBatch(options: Partial<GenerateOptions> = {}): Batch {
     refunds,
     chargebacks,
     settlements,
+    recon,
     bank: shuffledBank,
     ledger,
     truth: {
@@ -355,6 +410,7 @@ export function generateBatch(options: Partial<GenerateOptions> = {}): Batch {
         refunds: refunds.length,
         chargebacks: chargebacks.length,
         settlements: settlements.length,
+        reconRows: recon.length,
         bankRows: shuffledBank.length,
         ledgerLines: ledger.length,
         records:
@@ -362,6 +418,7 @@ export function generateBatch(options: Partial<GenerateOptions> = {}): Batch {
           refunds.length +
           chargebacks.length +
           settlements.length +
+          recon.length +
           shuffledBank.length +
           ledger.length,
       },
@@ -417,6 +474,9 @@ function postSettlement(r: Rng, settlement: Settlement, ledger: LedgerEntry[]): 
 type PlantContext = {
   r: Rng;
   settlements: Settlement[];
+  recon: ReconRow[];
+  /** settlementId → its payment ids. The mapping the matcher has to rediscover. */
+  settlementPayments: Map<string, string[]>;
   bank: BankCredit[];
   ledger: LedgerEntry[];
   creditsOf: Map<string, string[]>;
@@ -432,12 +492,13 @@ type PlantContext = {
  * an ambiguous answer key silently mis-scores every run afterwards.
  */
 function plant(context: PlantContext) {
-  const { r, settlements, bank, ledger, creditsOf, journalOf } = context;
+  const { r, settlements, recon, bank, ledger, creditsOf, journalOf } = context;
   const links: TruthLink[] = [];
   const counts = Object.fromEntries(
     Object.keys(PLANT_SHARE).map((key) => [key, 0]),
   ) as Record<FailureClass, number>;
   const touched = new Set<string>();
+  const reconTouched = new Set<string>();
 
   const creditById = new Map(bank.map((credit) => [credit.id, credit]));
   const pool = shuffled(r, settlements);
@@ -664,6 +725,137 @@ function plant(context: PlantContext) {
     });
   }
 
+  /* ── The recon report ─────────────────────────────────────────────────*/
+
+  /**
+   * Both of these damage the *itemisation* rather than the money. The payout still arrives,
+   * the books still balance, and the settlement report still adds up — only the question
+   * "which payments was this?" stops having an answer, which is exactly the failure a
+   * controller cannot see until an auditor asks.
+   */
+
+  const settlementsByDate = new Map<string, Settlement[]>();
+  for (const settlement of settlements) {
+    const bucket = settlementsByDate.get(settlement.settledAt);
+    if (bucket) bucket.push(settlement);
+    else settlementsByDate.set(settlement.settledAt, [settlement]);
+  }
+  /** Dates carrying more than one payout, deterministically ordered. */
+  const busyDates = [...settlementsByDate.entries()]
+    .filter(([, onDate]) => onDate.length > 1)
+    .map(([date]) => date)
+    .sort();
+
+  const dropRows = (settlementId: string) => {
+    for (let i = recon.length - 1; i >= 0; i--) {
+      if (recon[i].settlementId === settlementId) recon.splice(i, 1);
+    }
+  };
+
+  /**
+   * `MISSING_RECON_ROW` — the report omits a payout entirely.
+   *
+   * Planted in two shapes on purpose, because the same damage has two different honest
+   * answers:
+   *
+   * - **One omission on a date.** Every other payout that day is itemised, so the omitted
+   *   payout's payments are the exact remainder — count and value both tie. That is
+   *   recoverable *by elimination*, so the key expects a MATCH.
+   * - **Two omissions on one date.** Now eighty payments have to be split between two
+   *   payouts of forty and nothing says which way. Unrecoverable, so the key expects an
+   *   EXCEPTION.
+   *
+   * A dataset where every instance of a class has the same answer teaches a matcher to
+   * pattern-match the class instead of doing the work.
+   */
+  const missingTarget = Math.max(3, Math.round(settlements.length * PLANT_SHARE.MISSING_RECON_ROW));
+  const pairDates = busyDates.filter((date) =>
+    settlementsByDate.get(date)!.every((s) => !reconTouched.has(s.id)),
+  );
+
+  /* The unrecoverable shape first: whole dates, two payouts each. */
+  const dateCursor = int(r, 0, Math.max(0, pairDates.length - 1));
+  const pairsWanted = Math.max(1, Math.floor(missingTarget / 3));
+  for (let planted = 0; planted < pairsWanted && pairDates.length > 0; planted++) {
+    const date = pairDates[(dateCursor + planted * 7) % pairDates.length];
+    const onDate = settlementsByDate.get(date)!.filter((s) => !reconTouched.has(s.id));
+    if (onDate.length < 2) continue;
+    for (const settlement of onDate.slice(0, 2)) {
+      dropRows(settlement.id);
+      reconTouched.add(settlement.id);
+      counts.MISSING_RECON_ROW++;
+      links.push({
+        lane: "PAYMENT_TO_SETTLEMENT",
+        left: [],
+        right: [settlement.id],
+        expect: "EXCEPTION",
+        class: "MISSING_RECON_ROW",
+        note: `Absent from the recon report, and so is another payout on ${date} — the two cannot be told apart.`,
+      });
+    }
+  }
+
+  /* The recoverable shape: one omission on a date whose other payouts are all itemised. */
+  for (const date of busyDates) {
+    if (counts.MISSING_RECON_ROW >= missingTarget) break;
+    const onDate = settlementsByDate.get(date)!;
+    if (onDate.some((s) => reconTouched.has(s.id))) continue;
+    const settlement = onDate[int(r, 0, onDate.length - 1)];
+    dropRows(settlement.id);
+    reconTouched.add(settlement.id);
+    counts.MISSING_RECON_ROW++;
+    links.push({
+      lane: "PAYMENT_TO_SETTLEMENT",
+      left: context.settlementPayments.get(settlement.id)!,
+      right: [settlement.id],
+      expect: "MATCH",
+      class: "MISSING_RECON_ROW",
+      note: "Absent from the recon report, but every other payout that day is itemised, so its payments are the remainder.",
+    });
+  }
+
+  /**
+   * `MISATTRIBUTED_PAYMENT` — one payment swapped between two payouts of the same day.
+   *
+   * The nastiest of the set, because nothing is missing: both payouts still list forty
+   * payments, the date still ties out in total, and only the per-payout **value** is wrong.
+   * A matcher that checks counts and not sums accepts it silently, which is why the recon
+   * pass checks both.
+   */
+  const swapTarget = Math.max(2, Math.round(settlements.length * PLANT_SHARE.MISATTRIBUTED_PAYMENT));
+  for (const date of busyDates) {
+    if (counts.MISATTRIBUTED_PAYMENT >= swapTarget) break;
+    const onDate = settlementsByDate.get(date)!.filter((s) => !reconTouched.has(s.id));
+    if (onDate.length < 2) continue;
+
+    const [a, b] = onDate;
+    const rowsA = recon.filter((row) => row.settlementId === a.id && row.type === "payment");
+    const rowsB = recon.filter((row) => row.settlementId === b.id && row.type === "payment");
+    if (rowsA.length === 0 || rowsB.length === 0) continue;
+
+    const rowA = rowsA[int(r, 0, rowsA.length - 1)];
+    const rowB = rowsB[int(r, 0, rowsB.length - 1)];
+    if (rowA.amount === rowB.amount) continue; // A swap of equal values damages nothing.
+
+    rowA.settlementId = b.id;
+    rowA.utr = b.utr;
+    rowB.settlementId = a.id;
+    rowB.utr = a.utr;
+
+    for (const settlement of [a, b]) {
+      reconTouched.add(settlement.id);
+      counts.MISATTRIBUTED_PAYMENT++;
+      links.push({
+        lane: "PAYMENT_TO_SETTLEMENT",
+        left: [],
+        right: [settlement.id],
+        expect: "EXCEPTION",
+        class: "MISATTRIBUTED_PAYMENT",
+        note: `One payment traded with the other payout of ${date}: the count still ties, the value does not.`,
+      });
+    }
+  }
+
   /* Bank-side noise, which belongs to no settlement at all. */
 
   const duplicates = Math.max(1, Math.round(bank.length * PLANT_SHARE.DUPLICATE_CREDIT));
@@ -726,5 +918,5 @@ function plant(context: PlantContext) {
     });
   }
 
-  return { links, counts, touched };
+  return { links, counts, touched, reconTouched };
 }

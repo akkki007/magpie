@@ -23,6 +23,7 @@ const SOURCES: SourceName[] = [
   "refunds.csv",
   "chargebacks.csv",
   "settlements.csv",
+  "recon.csv",
   "bank.csv",
   "ledger.csv",
 ];
@@ -85,6 +86,7 @@ if (existsSync(truthPath)) {
     "refunds.csv": truth.counts.refunds,
     "chargebacks.csv": truth.counts.chargebacks,
     "settlements.csv": truth.counts.settlements,
+    "recon.csv": truth.counts.reconRows,
     "bank.csv": truth.counts.bankRows,
     "ledger.csv": truth.counts.ledgerLines,
   };
@@ -143,6 +145,7 @@ if (existsSync(truthPath)) {
     compare("refund", batch.refunds, made.refunds);
     compare("chargeback", batch.chargebacks, made.chargebacks);
     compare("settlement", batch.settlements, made.settlements);
+    compare("recon", batch.recon, made.recon);
     compare("bank", batch.bank, made.bank);
     compare("ledger", batch.ledger, made.ledger);
 

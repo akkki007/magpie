@@ -34,6 +34,7 @@ const SOURCES: SourceName[] = [
   "refunds.csv",
   "chargebacks.csv",
   "settlements.csv",
+  "recon.csv",
   "bank.csv",
   "ledger.csv",
 ];
@@ -153,9 +154,6 @@ console.log("  resolved = the key's outcome was produced · labelled = and with 
 const totalMs = ingestMs + run.stats.elapsedMs;
 const escalated = overall.produced.PROPOSED + overall.produced.EXCEPTION;
 const decided = escalated + overall.produced.AUTO_MATCHED;
-const paymentLaneProposals =
-  card.lanes.find((lane) => lane.lane === "PAYMENT_TO_SETTLEMENT")?.produced.PROPOSED ?? 0;
-
 console.log("\nThroughput and cost");
 console.log(rule());
 console.log(`  Wall clock                ${pad(totalMs.toFixed(0) + " ms", 10)}   ${ingestMs.toFixed(0)} ms ingest + ${run.stats.elapsedMs.toFixed(0)} ms match`);
@@ -168,8 +166,31 @@ console.log(`  p50 / p95 escalated       ${pad("n/a", 10)}   no escalation tier 
 console.log(rule());
 
 console.log(`\n  Escalation rate ${percent(escalated / decided)} — ${escalated} of ${decided} results would reach an LLM tier.`);
-console.log(`  §6 wants that near 5%. Excluding the payments lane, whose assignment is not derivable`);
-console.log(`  from these sources, it is ${percent((escalated - paymentLaneProposals) / (decided - paymentLaneProposals))} — the other ${paymentLaneProposals} are a dataset problem, not a matcher one.`);
+console.log(`  §6 wants that near 5%, so the tiering is sound: ${overall.produced.PROPOSED} proposal(s) and ${overall.produced.EXCEPTION} exception(s).`);
+
+/**
+ * The warning §1.6 asks for, pointed at ourselves.
+ *
+ * *If the matcher scores 100%, the dataset is too easy — not the matcher good.* A perfect
+ * board with nothing left in the proposal lane means the deterministic rules resolve every
+ * case the data contains, which is a fine result for R2 and a problem for R4: an
+ * adjudication tier with nothing ambiguous to adjudicate cannot beat rules-only, and the
+ * ablation in §A8 would show three identical bars.
+ *
+ * Printing it here rather than in a plan nobody re-reads is the point.
+ */
+if (overall.precision === 1 && overall.matchRate === 1 && overall.produced.PROPOSED === 0) {
+  console.log(
+    [
+      "",
+      "  Note — every lane is at 100% and the proposal lane is empty. Per §1.6 that is a statement",
+      "  about the dataset, not a compliment to the matcher: nothing in this batch needs judgement,",
+      "  so an LLM tier has no work to do and the §A8 ablation would show three identical bars.",
+      "  The next dataset increment should plant genuine ambiguity — cases where the rules must",
+      "  abstain and only reading the narration could decide.",
+    ].join("\n"),
+  );
+}
 
 /* ── Proving the scoreboard can fail ──────────────────────────────────────*/
 
@@ -195,27 +216,35 @@ if (process.argv.includes("--self-check")) {
     if (!condition) failures.push(label);
   };
 
-  /* 1 — A proposal the key does not contain, promoted to auto-apply. */
-  const pooled = run.results.find(
-    (result) => result.outcome === "PROPOSED" && result.rule === "T2_PAYMENT_BATCH_AMBIGUOUS",
-  );
-  if (pooled) {
+  /**
+   * 1 — An auto-applied match pointed at the wrong record.
+   *
+   * This assertion used to promote a specific PROPOSED rule to auto-apply, and when R0.4
+   * emptied the proposal lane it stopped being constructible and skipped in silence — the
+   * self-check acquiring the exact blind spot it exists to rule out. So it is built from any
+   * auto-applied result now, and a mutation that cannot be constructed is a failure rather
+   * than a shrug.
+   */
+  const applied = run.results.find((result) => result.outcome === "AUTO_MATCHED" && result.right.length === 1);
+  const otherId = batch.bank.find((credit) => credit.id !== applied?.right[0])?.id;
+  if (!applied || !otherId) {
+    check("a wrong link applied without a human", false, "could not construct the mutation");
+  } else {
     const mutated = run.results.map((result) =>
-      result === pooled ? { ...result, outcome: "AUTO_MATCHED" as const } : result,
+      result === applied ? { ...result, right: [otherId] } : result,
     );
     const after = score(mutated, truth, batch.bank);
     check(
       "a wrong link applied without a human",
       after.overall.falseMatches.length > overall.falseMatches.length,
-      `false matches ${overall.falseMatches.length} → ${after.overall.falseMatches.length}, precision ${percent(overall.precision)} → ${percent(after.overall.precision)}`,
+      `false matches ${overall.falseMatches.length} → ${after.overall.falseMatches.length}, match rate ${percent(overall.matchRate)} → ${percent(after.overall.matchRate)}`,
     );
   }
 
   /* 2 — An exception the key expects, resolved instead. The dangerous direction. */
-  const raised = run.results.find(
-    (result) => result.outcome === "EXCEPTION" && result.rule === "T0_STANDALONE_DEBIT",
-  );
-  if (raised) {
+  const raised = run.results.find((result) => result.outcome === "EXCEPTION");
+  if (!raised) check("an exception resolved instead of raised", false, "no exception to mutate");
+  else {
     const mutated = run.results.map((result) =>
       result === raised
         ? { ...result, outcome: "AUTO_MATCHED" as const, left: [batch.settlements[0].id] }
@@ -231,10 +260,13 @@ if (process.argv.includes("--self-check")) {
   }
 
   /* 3 — The right link with the wrong label on it. */
-  const labelled = run.results.find((result) => result.class === "TDS_WITHHELD");
-  if (labelled) {
+  const labelled = run.results.find((result) => result.class !== null);
+  if (!labelled) check("a correct link carrying the wrong class", false, "no classified result to mutate");
+  else {
     const mutated = run.results.map((result) =>
-      result === labelled ? { ...result, class: "FOREIGN_CREDIT" as const } : result,
+      result === labelled
+        ? { ...result, class: labelled.class === "FOREIGN_CREDIT" ? ("TDS_WITHHELD" as const) : ("FOREIGN_CREDIT" as const) }
+        : result,
     );
     const after = score(mutated, truth, batch.bank);
     check(

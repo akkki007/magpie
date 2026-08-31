@@ -16,6 +16,7 @@ import type {
   LedgerEntry,
   Payment,
   PaymentMethod,
+  ReconRow,
   Refund,
   Settlement,
 } from "./types";
@@ -62,6 +63,7 @@ export type IngestedBatch = {
   refunds: Refund[];
   chargebacks: Chargeback[];
   settlements: Settlement[];
+  recon: ReconRow[];
   bank: BankCredit[];
   ledger: LedgerEntry[];
   rejections: Rejection[];
@@ -73,6 +75,7 @@ export type SourceName =
   | "refunds.csv"
   | "chargebacks.csv"
   | "settlements.csv"
+  | "recon.csv"
   | "bank.csv"
   | "ledger.csv";
 
@@ -284,6 +287,28 @@ export function ingestSources(sources: Partial<Record<SourceName, string>>): Ing
   );
 
   /**
+   * The settlement recon report. A gateway export, so it is clean — ISO dates, plain
+   * decimals — and its only awkwardness is that `amount` is signed: a payment adds to the
+   * payout and a refund or dispute comes out of it.
+   */
+  const recon = ingestFile<ReconRow>(
+    "recon.csv",
+    sources["recon.csv"],
+    ["entry_id", "settlement_id", "settled_at", "type", "entity_id", "amount"],
+    (read) => ({
+      id: read.text("entry_id"),
+      settlementId: read.text("settlement_id"),
+      utr: read.text("settlement_utr", { required: false }),
+      settledAt: read.date("settled_at", "ISO"),
+      type: read.choice("type", ["payment", "refund", "chargeback"] as const),
+      entityId: read.text("entity_id"),
+      amount: read.paise("amount"),
+      fee: read.paise("fee", { required: false }),
+      tax: read.paise("tax", { required: false }),
+    }),
+  );
+
+  /**
    * The bank statement, which is the only source that arrives in a bank's own format:
    * a BOM, `dd/mm/yyyy`, Indian digit grouping, commas inside the narration, and debits
    * and credits in separate columns. Normalising it to one signed integer is the whole
@@ -325,13 +350,14 @@ export function ingestSources(sources: Partial<Record<SourceName, string>>): Ing
     }),
   );
 
-  const parts = [payments, refunds, chargebacks, settlements, bank, ledger];
+  const parts = [payments, refunds, chargebacks, settlements, recon, bank, ledger];
 
   return {
     payments: payments.records,
     refunds: refunds.records,
     chargebacks: chargebacks.records,
     settlements: settlements.records,
+    recon: recon.records,
     bank: bank.records,
     ledger: ledger.records,
     rejections: parts.flatMap((part) => part.rejections),

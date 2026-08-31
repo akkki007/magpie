@@ -22,29 +22,29 @@
 > | `lib/recon/generate.ts` | Builds a clean world, then damages it on purpose |
 > | `lib/recon/csv.ts` | CSV writing, including the deliberate messes |
 > | `lib/recon/parse.ts` | RFC 4180 parser, and decoders that refuse rather than coerce |
-> | `lib/recon/ingest.ts` | Six source schemas → canonical records + typed rejections |
+> | `lib/recon/ingest.ts` | Seven source schemas → canonical records + typed rejections |
 > | `lib/recon/tolerance.ts` | Every allowance the matcher may make, named, in one file |
 > | `lib/recon/candidates.ts` | Indexes, edit distance, and the bounded subset search |
 > | `lib/recon/match.ts` | The tiered deterministic matcher and its `MatchResult` |
+> | `lib/recon/score.ts` | Precision and recall, measured in opposite directions |
 > | `scripts/recon-seed.ts` | Seeder, with its own integrity check |
 > | `scripts/recon-ingest.ts` | Rows in / records out / rejected, cross-checked against truth |
-> | `lib/recon/score.ts` | Precision and recall, measured in opposite directions |
 > | `scripts/recon-match.ts` | Per-tier counts, timing, and the exception queue |
 > | `scripts/recon-eval.ts` | The scoreboard, and a self-check that it can fail |
 >
-> Default run: 5,000 payments → **6,172 records** across six files, **61 planted failures
-> across all 13 classes** plus 5 deliberately malformed rows, 431 links to score.
-> Ingestion reads 6,177 rows at ~69k rows/sec and rejects exactly the 5 planted ones.
-> Matching produces **456 results in ~25 ms**: 296 auto-applied, 135 proposed, 25
-> exceptions. `bun run recon:eval` scores that at **100% auto-apply precision, a 0%
-> false-match rate, 100% exception recall and 100% class accuracy (61 of 61)**, with a
-> **68.7% match rate** overall — 100% on both settlement lanes, 8.2% on the payments lane,
-> whose per-settlement assignment is not derivable from the sources at all. All 6,172
-> records end to end in ~112 ms. `--self-check` corrupts the matcher's own output to prove
-> the scoreboard reacts, because an all-green scoreboard and a broken one look identical.
-> **R4 (the agent) is next**, and the escalation rate it inherits is 7.8% of the two
-> derivable lanes — inside the ~5% §6 asks for, once the payments lane is fixed in R0.
-> The modelling engine this ends in is built — `docs/modelling-plan.md`.
+> Default run: 5,000 payments → **11,258 records** across seven files, **69 planted failures
+> across all 15 classes** plus 5 deliberately malformed rows, 456 links to score. Ingestion
+> reads 11,263 rows and rejects exactly the 5 planted ones. Matching produces 456 results in
+> ~32 ms, and `recon:eval` scores it at **100% auto-apply precision, a 0% false-match rate,
+> a 100% match rate on all three lanes, 100% exception recall and 100% class accuracy** —
+> 11,258 records end to end in ~200 ms, no model involved. `--self-check` corrupts the
+> matcher's own output to prove the scoreboard reacts.
+>
+> **That perfect board is now the open problem, not the achievement.** §1.6 cuts both ways:
+> nothing left in the proposal lane means nothing in this batch needs judgement, so R4 has
+> no work and the §A8 ablation would show three identical bars. **The next task is planting
+> genuine ambiguity** — see R0.5. The modelling engine this ends in is built:
+> `docs/modelling-plan.md`.
 
 ---
 
@@ -218,6 +218,41 @@ non-negotiable — an eval you cannot reproduce is not an eval.
 *Done when:* each class is present, counted, and the totals are printed by the seeder.
 *Respect:* §1.6 — if the matcher scores 100%, the dataset is too easy, not the agent good.
 
+**R0.4 — The settlement recon report.** *Added after R3, because R3 measured the hole.*
+
+The payments export carries no settlement id, so the payments lane had no reference on
+either side and the payout calendar was the only join. That proves a *date* ties out and can
+never say which of eight same-day payouts a payment belongs to — 10^23 partitions, all of
+which the arithmetic accepts. The matcher recovered 12 of 147 links, guessed nothing, and
+was permanently capped there: R4's model cannot derive information the files do not contain.
+
+Razorpay publishes a per-payment settlement recon report, so the dataset now emits one —
+`recon.csv`, one row per settled entity, naming the payout it landed in and the UTR it was
+paid under. A matcher that needs it is not being given a hint; a dataset that omits it was
+the thing being unrealistic. The lane went from **8.2% to 100%**, and the overall escalation
+rate from 35.1% to 6.8%.
+
+Two classes are planted in the new file, and `MISSING_RECON_ROW` is planted in **two shapes
+with two different answers** on purpose:
+
+| Shape | Why the key expects what it does |
+|---|---|
+| One payout omitted on a date | Every other payout that day is itemised, so its payments are the exact remainder — recoverable **by elimination**, so `MATCH` |
+| Two payouts omitted on one date | Eighty payments, two payouts of forty, nothing to tell them apart — `EXCEPTION` |
+| `MISATTRIBUTED_PAYMENT` | One payment traded between two same-day payouts: the count still ties and the value does not, so a matcher checking cardinality alone accepts it silently |
+
+*Done when:* the lane matches on a reference rather than a calendar, and the calendar becomes
+an independent second derivation rather than the only one.
+
+**R0.5 — Plant genuine ambiguity.** *Next.* The batch is now fully solvable by deterministic
+rules, and §1.6 says that is a statement about the dataset. R4 needs cases where the rules
+*must* abstain and only judgement can decide — two same-day payouts of identical value with
+one missing UTR, a narration that names its payout in prose rather than a reference, a
+deduction that is explicable two ways. Until those exist, the hybrid cannot beat rules-only
+and the ablation has nothing to show.
+*Respect:* the abstention has to be genuine. A case the rules could resolve with one more
+tolerance is a missing rule, not an ambiguity.
+
 ### R1 — Ingest and normalise
 
 **R1.1 — CSV ingestion** for each source (payments export, settlement report, bank
@@ -260,21 +295,19 @@ the plan as written, each for a reason:
   twenty-five ids still printed a confident match, and was simply the wrong link — §6's
   worst failure arriving through the reporting code rather than through a rule.
 
-**One finding that belongs to R0, not R2.** The payments-to-settlements lane has no
-reference on either side, so the payout calendar (T+2, weekends skipped) is the only thing
-joining the two files. That yields a genuine **tie-out** — for every payout date, count,
-gross, fees and GST all agree to the paisa — but not an **assignment**: a date carrying
-eight settlements of forty payments each offers about 10^23 partitions and the arithmetic
-accepts all of them. The matcher recovers the single-settlement dates and any small batch by
-cardinality-constrained subset-sum (12 of 147), reports the rest as tied-out-but-ambiguous,
-and makes **zero false matches** doing it.
+**One finding that belonged to R0, now fixed.** The payments lane had no reference on either
+side and was capped at 8.2% by the data rather than by the matcher — the whole argument is in
+R0.4. With `recon.csv` the lane is a reference join like the other two and sits at 100%.
 
-That is the right behaviour, but it is a permanent ceiling: no amount of work, including
-R4's model, can derive information the sources do not contain, so `truth.json` currently
-holds 135 answers for this lane that nothing could ever earn. The fix is a dataset change —
-Razorpay's settlement recon report *does* carry a per-payment breakdown, so R0 should emit
-one and plant its own failures in it. **Decide that before R3**, because R3's denominator
-depends on it.
+Two bugs found while fixing it, both the same mistake:
+
+- **The sign of an amount is not evidence.** A payout whose refunds exceeded its takings
+  settles *negative* and arrives as a bank debit — carrying the correct UTR. Passes that
+  guarded on `amount > 0` silently excluded it.
+- **A catch-all runs last.** Removing that guard from the near-miss pass changed nothing,
+  because the debit pass still ran *before* it and had already claimed the row. The second
+  instance carried a transposed UTR too, so it needed the near-miss pass specifically. Only
+  the structural pass still assumes positive amounts, and it says so.
 
 ### R3 — Metrics, before the agent
 
@@ -312,9 +345,11 @@ Three things the build settled:
   match, then asserts the scoreboard moves in all three. R1 plants malformed rows for the
   same reason; a scorer whose failure path never runs is measuring nothing.
 
-The one number to keep watching: **escalation rate**, 35.1% of all results but 7.8% once the
-undecidable payments lane is excluded. §6 wants T3 seeing ~5%, so the tiering is sound and
-the payments lane is a dataset problem — see the finding under R2.
+The one number to keep watching: **escalation rate**, now 6.8% against the ~5% §6 asks of an
+LLM tier. It was 35.1% before R0.4, and the whole difference was the undecidable payments
+lane — which is what a scoreboard is for. `recon:eval` prints the §1.6 warning itself when
+every lane hits 100% and the proposal lane is empty, because that is the state the batch is
+in now and a plan nobody re-reads is the wrong place to record it.
 
 ### R4 — The agent
 
@@ -394,6 +429,9 @@ Then stop. The six-agent product vision is the last slide, after the numbers —
 
 - **An empty exception list.** Reads as a broken evaluator, not a perfect agent. R0.3 is the
   mitigation; state the planted counts up front.
+- **A full board and an empty proposal lane** — the state after R0.4. Every lane at 100%
+  with nothing escalated means the *data* has no hard cases, so the agent cannot improve on
+  the rules and the ablation shows three identical bars. R0.5 is the mitigation.
 - **Demoing the workspace instead of the loop.** The grid is the payoff, not the pitch. A
   judge scoring this track is looking for a number.
 - **LLM in the hot path.** If throughput collapses at 5,000 records, the tiering is wrong —

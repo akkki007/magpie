@@ -92,6 +92,34 @@ export type BankCredit = {
   amount: Paise;
 };
 
+/**
+ * One row of the settlement recon report (`docs/recon-plan.md` R0.4).
+ *
+ * This is the file whose absence made the payments lane undecidable. The settlement report
+ * says *"this payout covered 40 payments worth ₹14,87,251.53"*; the recon report says
+ * **which** 40 — one row per settled entity, carrying the settlement it landed in and the
+ * UTR it was paid under. Razorpay publishes exactly this, so a matcher that needs it is not
+ * being given a hint; a dataset that omits it is the thing being unrealistic.
+ *
+ * With it, the lane becomes a reference join like the other two. Without it, the payout
+ * calendar can prove a date ties out and can never say which of eight same-day payouts a
+ * payment belongs to — about 10^23 partitions, all of which the arithmetic accepts.
+ */
+export type ReconRow = {
+  id: string;
+  settlementId: string;
+  /** The UTR the settlement claims, repeated on every row as the report does. */
+  utr: string;
+  settledAt: string;
+  type: "payment" | "refund" | "chargeback";
+  /** The payment, refund or dispute this row settles. */
+  entityId: string;
+  /** Signed: a payment adds to the payout, a refund or dispute comes out of it. */
+  amount: Paise;
+  fee: Paise;
+  tax: Paise;
+};
+
 export type LedgerAccount =
   | "Bank"
   | "Razorpay Clearing"
@@ -135,7 +163,9 @@ export type FailureClass =
   | "DUPLICATE_CREDIT"
   | "FOREIGN_CREDIT"
   | "ROUNDING_PAISE"
-  | "MISSING_LEDGER_ENTRY";
+  | "MISSING_LEDGER_ENTRY"
+  | "MISSING_RECON_ROW"
+  | "MISATTRIBUTED_PAYMENT";
 
 /** Which lane a link belongs to. Match rate is reported per lane, never as one blur. */
 export type Lane =
@@ -177,6 +207,7 @@ export type Batch = {
   refunds: Refund[];
   chargebacks: Chargeback[];
   settlements: Settlement[];
+  recon: ReconRow[];
   bank: BankCredit[];
   ledger: LedgerEntry[];
   truth: Truth;
@@ -197,4 +228,6 @@ export const FAILURE_LABEL: Record<FailureClass, string> = {
   FOREIGN_CREDIT: "Not a gateway credit",
   ROUNDING_PAISE: "Off by paise",
   MISSING_LEDGER_ENTRY: "Settled but never posted",
+  MISSING_RECON_ROW: "Settled but never itemised",
+  MISATTRIBUTED_PAYMENT: "Payment itemised against the wrong payout",
 };
