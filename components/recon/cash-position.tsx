@@ -5,7 +5,7 @@ import { TrendingDown } from "lucide-react";
 
 import { cn } from "@/lib/cn";
 import { evaluate } from "@/lib/model/engine";
-import { formatValue } from "@/lib/model/format";
+import { toIndianDecimal } from "@/lib/recon/money";
 import { buildCashModel, CASH_VARS } from "@/lib/recon/cash-model";
 import type { CashSeries } from "@/lib/recon/cash";
 import type { QueueEntry } from "@/lib/recon/report";
@@ -28,6 +28,24 @@ import type { QueueState } from "@/lib/recon/queue-commands";
  * forecast that states how much of itself is unverified, and shrinks that number only when a
  * human actually resolves something.
  */
+/**
+ * Rupees, Indian-grouped, with the symbol.
+ *
+ * Deliberately *not* `lib/model/format`'s `formatValue`, which is symbol-less and en-US
+ * grouped — a correct choice for a 24-column grid where the unit glyph lives in the row
+ * header and bare digits are what keep it readable. Three columns of ₹3.5 crore is a
+ * statement, not a grid, and it sits directly under tiles that use Indian grouping. Two money
+ * formats disagreeing on one screen is the sort of detail a finance reviewer notices first.
+ *
+ * Built on the module's own string formatter rather than `Intl` so the server render and the
+ * client hydration cannot disagree about grouping.
+ */
+const rupees = (value: number) => {
+  if (!Number.isFinite(value)) return "—";
+  if (Math.round(value) === 0) return "–";
+  return `₹${toIndianDecimal(Math.round(value) * 100).slice(0, -3)}`;
+};
+
 export function CashPosition({
   cash,
   queue,
@@ -84,7 +102,7 @@ export function CashPosition({
         {resolvedValue > 0 && (
           <p className="ml-auto inline-flex items-center gap-1.5 text-[12px] text-pos-fg">
             <TrendingDown className="h-3.5 w-3.5" strokeWidth={2} aria-hidden />
-            band down {formatValue(resolvedValue / 100, "CURRENCY")} · {formatValue(bandNow, "CURRENCY")} still unverified
+            band down {rupees(resolvedValue / 100)} · {rupees(bandNow)} still unverified
           </p>
         )}
       </header>
@@ -134,7 +152,7 @@ export function CashPosition({
                         row.tone === "risk" && value !== 0 && "text-neg-fg",
                       )}
                     >
-                      {formatValue(value, "CURRENCY")}
+                      {rupees(value)}
                     </td>
                   ))}
                 </tr>

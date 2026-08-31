@@ -17,7 +17,7 @@ import { join } from "node:path";
 import { applyAdjudications, gate, packetsFrom } from "../lib/recon/adjudicate";
 import { buildCashSeries } from "../lib/recon/cash";
 import { ingestSources, type SourceName } from "../lib/recon/ingest";
-import { runMatch } from "../lib/recon/match";
+import { runMatch, type MatchResult } from "../lib/recon/match";
 import { toIndianDecimal } from "../lib/recon/money";
 import { score } from "../lib/recon/score";
 import { TOLERANCES } from "../lib/recon/tolerance";
@@ -326,6 +326,16 @@ if (process.argv.includes("--self-check")) {
  * and exactly what a single-metric slide would hide.
  */
 let ablation: Record<string, unknown> | null = null;
+/**
+ * When the adjudication tier ran, the report describes *that* system.
+ *
+ * Otherwise the screen would keep showing the deterministic run after R4 had been proven —
+ * six items sitting in the queue that the agent already resolved, and a match rate a full
+ * point below what the pipeline actually achieves. The report should describe whichever
+ * system produced it, and say which one that was.
+ */
+let hybridResultsForReport: MatchResult[] | null = null;
+let hybridCardForReport: ReturnType<typeof score> | null = null;
 
 if (process.argv.includes("--with-agent")) {
   const cassette = join(dir, "adjudications.json");
@@ -348,6 +358,8 @@ if (process.argv.includes("--with-agent")) {
     const adjudicated = gate(packets, { decisions: recorded.decisions }, batch.settlements);
     const hybridResults = applyAdjudications(run.results, adjudicated);
     const hybrid = score(hybridResults, truth, batch.bank);
+    hybridResultsForReport = hybridResults;
+    hybridCardForReport = hybrid;
 
     const row = (label: string, card: typeof hybrid) => {
       const o = card.overall;
@@ -395,7 +407,10 @@ if (process.argv.includes("--with-agent")) {
  * sort in two places and trusting them to agree is how a cash line ends up attributing a
  * ₹14 lakh exception to the wrong month.
  */
-const queue = run.results
+const reported = hybridResultsForReport ?? run.results;
+const reportedCard = hybridCardForReport ?? card;
+
+const queue = reported
   .filter((result) => result.outcome !== "AUTO_MATCHED")
   .sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount))
   .map((result) => ({
@@ -412,7 +427,7 @@ const queue = run.results
     evidence: result.evidence,
   }));
 
-const cash = buildCashSeries(batch, run.results, queue);
+const cash = buildCashSeries(batch, reported, queue);
 
 const report = {
   generatedAt: new Date().toISOString(),
@@ -420,13 +435,15 @@ const report = {
   tolerances: TOLERANCES,
   timing: { ingestMs, matchMs: run.stats.elapsedMs, totalMs, recordsPerSecond: records / (totalMs / 1000) },
   cost: { llmCalls: 0, promptTokens: 0, completionTokens: 0, rupeesPerThousandRecords: 0 },
+  /** Which system this report describes, so the screen cannot misattribute the numbers. */
+  arm: hybridResultsForReport ? "rules + adjudication" : "rules only",
   headline: {
-    precision: overall.precision,
+    precision: reportedCard.overall.precision,
     escalatedWithCorrectTopCandidate: escalatedCorrect,
-    falseMatchRate: overall.falseMatchRate,
-    matchRate: overall.matchRate,
-    coverage: overall.coverage,
-    exceptionRecall: overall.exceptionRecall,
+    falseMatchRate: reportedCard.overall.falseMatchRate,
+    matchRate: reportedCard.overall.matchRate,
+    coverage: reportedCard.overall.coverage,
+    exceptionRecall: reportedCard.overall.exceptionRecall,
     escalationRate: escalated / decided,
   },
   tiers: run.stats.byTier,
@@ -448,7 +465,9 @@ const report = {
 
 writeFileSync(out, `${JSON.stringify(report, null, 2)}\n`);
 
-const unresolvedValue = run.results
+// `reported`, not `run.results`: after the adjudication tier runs, the deterministic total
+// would contradict the report written one line above it.
+const unresolvedValue = reported
   .filter((result) => result.outcome !== "AUTO_MATCHED")
   .reduce((total, result) => total + Math.abs(result.amount), 0);
 

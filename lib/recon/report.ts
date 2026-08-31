@@ -30,6 +30,8 @@ export type QueueEntry = {
 
 export type RunReport = {
   generatedAt: string;
+  /** "rules only" or "rules + adjudication" — which system produced these numbers. */
+  arm?: string;
   batch: { dir: string; seed: number; rowsIn: number; records: number; rejected: number };
   timing: { ingestMs: number; matchMs: number; totalMs: number; recordsPerSecond: number };
   headline: {
