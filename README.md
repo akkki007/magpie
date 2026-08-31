@@ -20,7 +20,7 @@ Honest status, because a README that overstates is worse than no README.
 | Modelling grid | **Built.** `/workspace` reproduces `designs/modelling-1.jpg` — groups, dimensions, sticky columns, inline editing, undo, scenarios, grain switching. |
 | Modelling engine | **Built, in memory.** AST formulas, cell-level evaluation, aggregation rollup and a command bus in `lib/model`. `bun run calc:check` asserts the rollup. |
 | Modelling persistence | **Planned, not built.** No `Model` table — the module resets on reload. `docs/modelling-plan.md` M0 is the next slice. |
-| Reconciliation | **Planned.** Payments → settlements → bank → books, with a measured match rate. `docs/recon-plan.md`. |
+| Reconciliation | **Built through R2.** A 6,172-record synthetic batch with a labelled answer key, ingestion, and a deterministic matcher — `bun run recon:seed`, `recon:ingest`, `recon:match`. The scoreboard is next. `docs/recon-plan.md`. |
 | Organisations / roles | **Planned.** `docs/auth-plan.md` §3; tasks A3–A6. |
 | Learning site | **Built.** `/learning` — the lessons written alongside the code. |
 

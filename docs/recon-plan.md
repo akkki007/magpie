@@ -9,8 +9,9 @@
 > > **Throughput plus measured accuracy plus an honest exception list. One cherry-picked
 > > match proves nothing.**
 >
-> Status (2026-08-30): **R0 and R1 are built.** `bun run recon:seed` emits a deterministic
-> batch plus its answer key; `bun run recon:ingest --verify` reads it back:
+> Status (2026-08-31): **R0, R1 and R2 are built.** `bun run recon:seed` emits a
+> deterministic batch plus its answer key, `bun run recon:ingest --verify` reads it back,
+> and `bun run recon:match` reconciles it with no model involved anywhere:
 >
 > | File | What it is |
 > |---|---|
@@ -21,15 +22,21 @@
 > | `lib/recon/csv.ts` | CSV writing, including the deliberate messes |
 > | `lib/recon/parse.ts` | RFC 4180 parser, and decoders that refuse rather than coerce |
 > | `lib/recon/ingest.ts` | Six source schemas → canonical records + typed rejections |
+> | `lib/recon/tolerance.ts` | Every allowance the matcher may make, named, in one file |
+> | `lib/recon/candidates.ts` | Indexes, edit distance, and the bounded subset search |
+> | `lib/recon/match.ts` | The tiered deterministic matcher and its `MatchResult` |
 > | `scripts/recon-seed.ts` | Seeder, with its own integrity check |
 > | `scripts/recon-ingest.ts` | Rows in / records out / rejected, cross-checked against truth |
+> | `scripts/recon-match.ts` | Per-tier counts, timing, and the exception queue |
 >
 > Default run: 5,000 payments → **6,172 records** across six files, **61 planted failures
 > across all 13 classes** plus 5 deliberately malformed rows, 431 links to score.
-> Ingestion reads 6,177 rows at ~53k rows/sec, rejects exactly the 5 planted ones, and
-> `--verify` proves every field survives the CSV unchanged. **R2 (the deterministic
-> matcher) is next.** The modelling engine this ends in is built —
-> `docs/modelling-plan.md`.
+> Ingestion reads 6,177 rows at ~69k rows/sec and rejects exactly the 5 planted ones.
+> Matching produces **456 results in ~25 ms**: 296 auto-applied, 135 proposed, 25
+> exceptions, and **every one of the 13 planted classes is recovered at its planted count**.
+> The settlement-to-ledger lane is exact — 147 of 147 links, right outcome, right class.
+> **R3 (the scoreboard) is next**, and it is the only command allowed to open `truth.json`.
+> The modelling engine this ends in is built — `docs/modelling-plan.md`.
 
 ---
 
@@ -229,6 +236,38 @@ candidates inside the window. Cap the search and record when the cap was hit.
 *Done when:* the matcher runs the full batch and prints per-tier counts and timing.
 *Respect:* §1.1 — no model is involved anywhere in this task.
 
+*Built.* Eighteen named rules across four tiers; `lib/recon/tolerance.ts` holds every
+allowance and every confidence, and one function turns a confidence into `AUTO_MATCHED` or
+`PROPOSED` so the auto-apply lane cannot acquire a rule by accident. Three deviations from
+the plan as written, each for a reason:
+
+- **No amount buckets.** Buckets answer "what is near this amount", and near is fuzzy.
+  Every tolerance here is a *computable* delta instead — ±5 paise, or exactly 1% of gross —
+  so the query is a handful of exact hash probes. Faster, and it cannot silently widen.
+- **A debit can be a settlement.** When a day's refunds exceed its payout the gateway
+  settles a negative amount and the bank row is a debit carrying the correct UTR. The first
+  version claimed every debit as an exception up front and turned two matchable settlements
+  into four exceptions. Sign is not evidence; the reference passes run first now.
+- **`inputs[]` may be summarised, `left`/`right` may not.** Capping a forty-payment batch to
+  twenty-five ids still printed a confident match, and was simply the wrong link — §6's
+  worst failure arriving through the reporting code rather than through a rule.
+
+**One finding that belongs to R0, not R2.** The payments-to-settlements lane has no
+reference on either side, so the payout calendar (T+2, weekends skipped) is the only thing
+joining the two files. That yields a genuine **tie-out** — for every payout date, count,
+gross, fees and GST all agree to the paisa — but not an **assignment**: a date carrying
+eight settlements of forty payments each offers about 10^23 partitions and the arithmetic
+accepts all of them. The matcher recovers the single-settlement dates and any small batch by
+cardinality-constrained subset-sum (12 of 147), reports the rest as tied-out-but-ambiguous,
+and makes **zero false matches** doing it.
+
+That is the right behaviour, but it is a permanent ceiling: no amount of work, including
+R4's model, can derive information the sources do not contain, so `truth.json` currently
+holds 135 answers for this lane that nothing could ever earn. The fix is a dataset change —
+Razorpay's settlement recon report *does* carry a per-payment breakdown, so R0 should emit
+one and plant its own failures in it. **Decide that before R3**, because R3's denominator
+depends on it.
+
 ### R3 — Metrics, before the agent
 
 **Build this before R4.** Everything after is tuning, and tuning without a scoreboard is
@@ -236,6 +275,10 @@ guessing.
 
 **R3.1 — Score against `truth.json`** — match rate, precision, recall, **false-match rate**
 (the number that actually matters), and per-exception-class accuracy.
+*One scoring rule R2 forced:* a duplicated bank row is byte-identical to its original, so
+which of the pair is "the duplicate" is undecidable. The matcher keeps the lower id and says
+so; the scorer must treat the pair as unordered or it will report a false match that is not
+one.
 **R3.2 — Throughput and cost** — records/sec, wall clock, LLM calls, tokens, ₹ per 1,000
 records, p50/p95 latency per escalated record.
 **R3.3 — `bun run recon:eval`** — prints a confusion matrix and writes a run report to
@@ -285,7 +328,7 @@ forecast. An honest forecast says how much of itself is unverified.
 
 ```
 R0 ─► R1 ─► R2 ─► R3 ─► R4 ─► R5 ─► R6
-                   ▲
+ ✓     ✓     ✓     ▲
               stop here and you still have a submission
 ```
 
