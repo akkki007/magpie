@@ -58,8 +58,9 @@
 > impact, with bulk accept/reject and undo through a command bus, above a forward cash
 > position whose unverified band shrinks as the queue is worked. **R4 has now run live**
 > against `gpt-4o-mini` and the ablation's verdict is that the tier earned its place: match
-> rate 98.6% → 99.3% with precision at 100% and the false-match rate at 0%. Every task in this
-> plan is built. The adjudication tier, its validation gate and the ablation
+> rate 98.6% → 99.3% with precision at 100% and the false-match rate at 0%, and the three-bar
+> ablation is measured: LLM-only reaches 31.8% with an 8.8% false-match rate and takes 88
+> seconds where the rules take 21 ms. **Every task in this plan is built.** The adjudication tier, its validation gate and the ablation
 > harness all exist; the gate's ten rejection paths are exercised by `recon:agent --dry-run`
 > with no key and no network. The live path has never run — there is no API key on this
 > machine — so the scoreboard above is still the deterministic one and no claim is made about
@@ -409,6 +410,24 @@ before anything is shown (§A3, §A4).
 **R4.4 — Exception classification** — the agent labels each unresolved item with a class
 from R0.3 and one line of evidence (§A5).
 **R4.5 — The ablation harness** — the same batch three ways (§A8).
+*Built.* `bun run recon:ablate`:
+
+| arm | precision | false-match | match rate | class | time | calls |
+|---|---|---|---|---|---|---|
+| rules only | 100.0% | 0.0% | 98.6% | 92.4% | 0.02 s | 0 |
+| rules + adjudication | 100.0% | **0.0%** | **99.3%** | 96.2% | 10.0 s | 1 |
+| LLM only | 91.2% | **8.8%** | 31.8% | 0.0% | 87.9 s | 5 |
+
+The third bar exists to be lost, and it loses on every axis at once: **13 silent false
+matches**, a third of the match rate, and four thousand times the wall clock. It was not
+starved — it got the same records, formatted as clearly as the escalation packets, and it did
+not invent a single id. It simply cannot do arithmetic reliably over 166 lines, and nothing in
+that architecture recomputes what it claims.
+
+That is the whole argument for the tiering, and it is now a measurement rather than an
+assertion: rules are fast and exact, a model alone is slow and unverifiable, and the hybrid
+buys judgement only where rules cannot reach — behind a gate that recomputes every number it
+returns.
 *Done when:* the hybrid beats deterministic-only on match rate **without** raising the
 false-match rate.
 
@@ -488,10 +507,23 @@ than trusting what was recorded, so tightening the gate shows up on the next rep
 being frozen into an old recording. This is the same argument as R0.2's seeded RNG: an eval
 you cannot reproduce is not an eval.
 
-*What remains:* the other half of the headroom. Three links and the class labels are still
-open, and the honest lever is a **larger model**, not a more helpful prompt — `OPENAI_MODEL` is
-the whole change. R4.5's third arm (LLM-only) is also unbuilt; the two arms that decide whether
-the tier earns its place are the two that exist.
+*Both models were tried, and they disagree in an interesting way:*
+
+| model | accepted | match rate | class accuracy |
+|---|---|---|---|
+| `gpt-4o-mini` | 3 of 6 | 99.3% | 92.4% (labels wrong) |
+| `gpt-5.6` | 3 of 6 | 99.3% | **96.2%** (labels right) |
+
+Both close the same three, and **both decline all three `DISGUISED_COUNTERPARTY` items** —
+the ones whose narration is the gateway under a mangled name. The larger model is better only
+at labelling what it does accept.
+
+That agreement is not a failure, it is rule 3 of the prompt working: *if the narration does
+not actually identify the payout, decline*. `RZPSPL` identifies a counterparty, not which of
+its payouts this is, and both models read it that way. Closing those three means telling the
+model that a confirmed counterparty plus a unique candidate plus a paise-level gap is
+sufficient — which is precisely the tolerance §6 warns about, bought back in prose. **The
+remaining three stay in the queue for a human, and that is the design rather than a shortfall.**
 
 ### R5 — The review queue
 
@@ -605,7 +637,7 @@ ceiling; the scoreboard is what clears the floor.
 **What must not be cut:** the labelled dataset (R0.2), the false-match rate (R3.1), and the
 exception list (R5.1). Those three *are* the track.
 
-**What to cut first if needed:** R6, then R5.3, then R4.5.
+**What to cut first if needed:** R6, then R5.3, then R4.5. *In the end nothing was cut.*
 
 ---
 
