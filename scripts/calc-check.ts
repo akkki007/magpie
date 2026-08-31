@@ -9,7 +9,9 @@
 import { evaluate } from "../lib/model/engine";
 import { bucketsFor, rollup } from "../lib/model/grain";
 import { div, ref } from "../lib/model/formula";
-import { buildRevenueModel, V } from "../lib/model/revenue-model";
+import { db } from "../lib/db";
+import { readModel } from "../lib/model/persist";
+import { V } from "../prisma/seed-data";
 import { TOTAL } from "../lib/model/types";
 import type { Model } from "../lib/model/types";
 
@@ -26,7 +28,18 @@ function check(name: string, condition: boolean, detail = "") {
 
 const near = (a: number, b: number, epsilon = 1e-6) => Math.abs(a - b) < epsilon;
 
-const model = buildRevenueModel();
+/**
+ * The seeded model, not the fixture (M0.5).
+ *
+ * These assertions are worth far more against what the database actually returns: a rollup
+ * that is right in memory and wrong after a round-trip is precisely the bug this suite exists
+ * to catch, and it could not have caught it while both sides came from the same function.
+ */
+const model = await readModel(db, "revenue-model-2026");
+if (!model) {
+  console.error("\nNo seeded model — run `bun run seed` first.\n");
+  process.exit(1);
+}
 const base = evaluate(model, "s_base");
 
 console.log("\nWaterfall");

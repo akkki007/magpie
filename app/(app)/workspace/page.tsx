@@ -1,10 +1,11 @@
 import type { Metadata } from "next";
-import { redirect } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 
 import { Rail } from "@/components/app/rail";
 import { Topbar } from "@/components/app/topbar";
 import { Workbench } from "@/components/modelling/workbench";
-import { buildRevenueModel } from "@/lib/model/revenue-model";
+import { db } from "@/lib/db";
+import { readModel } from "@/lib/model/persist";
 import { getSession } from "@/lib/session";
 
 export const metadata: Metadata = { title: "Revenue Model 2026" };
@@ -12,10 +13,11 @@ export const metadata: Metadata = { title: "Revenue Model 2026" };
 /**
  * The modelling workspace, built to `designs/modelling-1.jpg`.
  *
- * The model is assembled on the server and handed to the client as data. That
- * is the M0 seam (`docs/modelling-plan.md` M0): when the Prisma tables land,
- * `buildRevenueModel()` becomes a query returning the same `Model` object and
- * nothing below this line changes.
+ * The model comes from Postgres and is handed to the client as data. That was the M0 seam
+ * (`docs/modelling-plan.md` M0), and it held: `buildRevenueModel()` became `readModel()`,
+ * returning the same `Model` object, and nothing below this line changed. The seed script
+ * proves the two are identical field for field, which is the only reason the swap was safe to
+ * make blind.
  *
  * Note where the auth check is: in the page, next to the data. Not in the
  * layout — on Next 16 a layout does not stop the page beneath it from running
@@ -25,7 +27,8 @@ export default async function ModelPage() {
   const session = await getSession();
   if (!session) redirect("/sign-in?next=/workspace");
 
-  const model = buildRevenueModel();
+  const model = await readModel(db, "revenue-model-2026");
+  if (!model) notFound();
 
   return (
     <div data-surface="app" className="flex h-dvh overflow-hidden bg-app">

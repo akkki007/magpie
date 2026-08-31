@@ -262,6 +262,38 @@ is done, and the decision it must not break.
 
 *Goal: delete nothing from the UI and change where the model comes from.*
 
+*Built.* `bun run seed` writes the model to Postgres, `/workspace` queries it, and
+`lib/model/revenue-model.ts` is gone — it now lives at `prisma/seed-data.ts`, where nothing in
+`app/` or `lib/` can import it. `bun run calc:check` runs against the seeded model, so the
+golden assertions validate round-tripped data rather than the function that produced it.
+
+**The seed proves the swap before making it.** It writes, reads back, and compares field for
+field — every formula tree, all 264 input cells, every scenario overlay. M0's promise is
+*change where the model comes from and nothing else*, and the only way to know that is to show
+the database returns the identical object. It found two real problems on its first two runs:
+
+- **The fixture was not storable.** Its shaping functions authored a churn rate of
+  `0.010145423274166877` — spurious precision twice over, since nobody types eighteen decimal
+  places and `numeric(20,6)` cannot hold them. A fixture the database cannot represent is a
+  fixture that was lying about what the product does. Rounded at the authoring end, not at the
+  write end: rounding on write would have hidden it.
+- **The comparison itself was wrong.** It compared `JSON.stringify` output, so identical
+  objects with different key order reported as different. A check that cries wolf gets
+  ignored; it sorts keys now.
+
+**`DATE` is deliberately not in the `NumberFormat` enum**, though §2 lists it. Nothing renders
+one and `formatValue`'s switch is exhaustive, so a `DATE` row would load fine and render as
+nothing. The database must not be able to express a state the engine cannot honour — that
+correspondence *is* M0. It goes in the day the renderer handles it.
+
+**Two conversions happen at one edge.** `lib/model/persist.ts` turns `Decimal` into `number`
+on the way out and holds `numeric(20,6)` on the way in, so no component ever meets a Decimal
+and no float ever reaches a column — the two failure modes §2 guards against, pointing in
+opposite directions.
+
+*Not built:* `ModelVersion` snapshots and the `ChangeSet`/`Command` tables, which belong to
+M3 where there is something to write to them.
+
 **M0.1 — Model, group and variable tables**
 - Add `Model`, `VariableGroup`, `Variable` to `prisma/schema.prisma`, with the fields in
   §2 — including `dimensionId`, `memberRollup` and `timeContext`, which the built UI
@@ -307,6 +339,8 @@ is done, and the decision it must not break.
 **M0.6 — A golden-file test for precision**
 - Assert a seeded series round-trips through JSONB with full `numeric` precision.
 - *Done when:* the test fails if anyone swaps a column to `float`.
+- *Built:* the seed writes `12345678.901234` into an input, reads it back, and fails unless it
+  survives exactly.
 
 ### M1 — The grid on live data
 

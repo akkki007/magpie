@@ -19,7 +19,7 @@ Honest status, because a README that overstates is worse than no README.
 | Auth | **Built.** Email + password, magic link, email verification, database sessions. |
 | Modelling grid | **Built.** `/workspace` reproduces `designs/modelling-1.jpg` — groups, dimensions, sticky columns, inline editing, undo, scenarios, grain switching. |
 | Modelling engine | **Built, in memory.** AST formulas, cell-level evaluation, aggregation rollup and a command bus in `lib/model`. `bun run calc:check` asserts the rollup. |
-| Modelling persistence | **Planned, not built.** No `Model` table — the module resets on reload. `docs/modelling-plan.md` M0 is the next slice. |
+| Modelling persistence | **Built.** The model lives in Postgres; `/workspace` queries it and `bun run seed` writes it. `calc:check` runs against the seeded model. `docs/modelling-plan.md` M0. |
 | Reconciliation | **Built, R0–R6.** An 11,258-record synthetic batch with a labelled answer key, ingestion, a deterministic matcher and a scoreboard: 100% precision, 0% false matches, 98.6% match rate. The remaining 1.4% is six links deliberately left for judgement; the adjudication tier and its validation gate are built but have never run against a live model. The review queue and the forward cash position are at `/recon` — resolving an exception shrinks the unverified band. `bun run recon:eval`. `docs/recon-plan.md`. |
 | Organisations / roles | **Planned.** `docs/auth-plan.md` §3; tasks A3–A6. |
 | Learning site | **Built.** `/learning` — the lessons written alongside the code. |

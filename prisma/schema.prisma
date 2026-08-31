@@ -91,3 +91,293 @@ model Verification {
   @@index([identifier])
   @@map("verification")
 }
+
+// ─── Modelling ──────────────────────────────────────────────────────────────
+//
+// `docs/modelling-plan.md` M0. These tables are the persisted form of the types
+// in `lib/model/types.ts`, and the field names match deliberately: the goal of
+// M0 is that the query returns the shape the engine already takes and nothing
+// above `lib/model` changes.
+//
+// Three rules from the plan are enforced here rather than by convention:
+//
+//  1. §2 — money is `numeric(20,6)`, never float. A `Float` column in this
+//     block is a bug, and M0.6's golden test exists to fail when one appears.
+//  2. §1.1 — a formula is a tree of rows, never a string. There is deliberately
+//     no `expression TEXT` column, not even "for debugging": the moment one
+//     exists it becomes the thing that is actually read, and renaming a
+//     variable silently breaks sixty formulas.
+//  3. §1.6 — a dimensioned variable stores one series per member and no total.
+//     The parent row is a rollup, so it cannot disagree with its children.
+//
+// `organisationId` is nullable only until A3 lands the org tables. The column
+// costs nothing now and saves a migration over every row later.
+
+enum Grain {
+  MONTH
+  QUARTER
+  YEAR
+}
+
+enum VariableKind {
+  INPUT
+  FORMULA
+  LINKED
+}
+
+/// §2 lists `DATE` as a fifth format. It is deliberately absent: nothing in the
+/// product renders one, and `formatValue`'s switch is exhaustive, so a `DATE`
+/// row would load fine and then render as nothing. The database must not be
+/// able to express a state the engine cannot honour — that correspondence is
+/// the whole premise of M0. Add it here on the day the renderer handles it.
+enum NumberFormat {
+  CURRENCY
+  COUNT
+  PERCENT
+  RATIO
+}
+
+/// §1.2. How a series collapses across time. Get this wrong and every
+/// quarterly view in the product is quietly incorrect.
+enum Aggregation {
+  SUM
+  FIRST
+  LAST
+  AVG
+  NONE
+}
+
+/// §1.6. Explicit rather than inferred from `aggregation`: ACV averages across
+/// plans but is a LAST across time, and guessing one from the other is how a
+/// rate gets summed into nonsense.
+enum MemberRollup {
+  SUM
+  AVG
+}
+
+/// Organisational only — the pastel highlighter chips, never semantic.
+enum ChipTone {
+  amber
+  rose
+  graphite
+  sky
+  blue
+}
+
+enum FormulaNodeType {
+  literal
+  ref
+  binary
+  call
+}
+
+enum BinaryOp {
+  ADD
+  SUBTRACT
+  MULTIPLY
+  DIVIDE
+  POWER
+}
+
+enum FormulaFn {
+  PRIOR
+  NEXT
+  YTD
+  CUMULATIVE
+  MIN
+  MAX
+  ABS
+}
+
+model Model {
+  id             String          @id @default(uuid())
+  organisationId String?
+  name           String
+  /// Stable URL key, so `/models/[slug]` survives a rename.
+  slug           String
+  baseGrain      Grain           @default(MONTH)
+  /// The columns derive from these two rather than being stored per period.
+  horizonStart   DateTime        @db.Date
+  horizonEnd     DateTime        @db.Date
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  groups         VariableGroup[]
+  variables      Variable[]
+  scenarios      Scenario[]
+
+  @@unique([slug])
+  @@index([organisationId])
+  @@map("model")
+}
+
+model VariableGroup {
+  id        String     @id @default(uuid())
+  modelId   String
+  name      String
+  chip      ChipTone   @default(graphite)
+  order     Int
+  model     Model      @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  variables Variable[]
+
+  @@unique([modelId, name])
+  @@index([modelId])
+  @@map("variable_group")
+}
+
+model Variable {
+  id      String       @id @default(uuid())
+  modelId String
+  groupId String
+  name    String
+  kind    VariableKind
+  format  NumberFormat
+  /// §1.2 — belongs to the variable, never to the chart.
+  aggregation  Aggregation
+  /// Expands the row into one child per member (§1.6).
+  dimensionId  String?
+  memberRollup MemberRollup?
+  /// The violet time chip on a reference, e.g. "Monthly".
+  timeContext String?
+  note        String?
+  order       Int
+
+  model     Model            @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  group     VariableGroup    @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  dimension Dimension?       @relation(fields: [dimensionId], references: [id])
+  formula   FormulaNode[]    @relation("VariableFormula")
+  /// Formula nodes elsewhere that point *at* this variable.
+  referencedBy FormulaNode[] @relation("FormulaRef")
+  inputs    VariableInput[]
+  series    VariableSeries[]
+  overrides ScenarioOverride[]
+
+  // §2: a formula referencing "Revenue" can only mean one variable. The
+  // case-insensitive half of this is a functional index added in the migration
+  // — Prisma's schema language cannot express `lower(name)`.
+  @@unique([modelId, name])
+  @@index([modelId])
+  @@index([groupId])
+  @@map("variable")
+}
+
+model Dimension {
+  id             String            @id @default(uuid())
+  organisationId String?
+  name           String
+  members        DimensionMember[]
+  variables      Variable[]
+
+  @@index([organisationId])
+  @@map("dimension")
+}
+
+model DimensionMember {
+  id          String    @id @default(uuid())
+  dimensionId String
+  /// Stable key used by inputs and formula refs; `name` is display only.
+  key         String
+  name        String
+  order       Int
+  dimension   Dimension @relation(fields: [dimensionId], references: [id], onDelete: Cascade)
+
+  @@unique([dimensionId, key])
+  @@index([dimensionId])
+  @@map("dimension_member")
+}
+
+/// §1.1. A formula is this tree and nothing else.
+model FormulaNode {
+  id       String          @id @default(uuid())
+  variableId String
+  parentId String?
+  type     FormulaNodeType
+  /// `binary` only.
+  op       BinaryOp?
+  /// `literal` only. Numeric, not float — a rate typed as 0.075 must survive.
+  literal  Decimal?        @db.Decimal(20, 6)
+  /// `ref` only. A foreign key, which is what makes a rename safe.
+  refVariableId String?
+  /// `ref` only — pins a dimension slice (`[v] BY plan = "Growth"`).
+  refMember     String?
+  /// `call` only.
+  fn       FormulaFn?
+  /// Argument position under `parentId`, so the tree rebuilds deterministically.
+  order    Int
+
+  variable    Variable      @relation("VariableFormula", fields: [variableId], references: [id], onDelete: Cascade)
+  refVariable Variable?     @relation("FormulaRef", fields: [refVariableId], references: [id])
+  parent      FormulaNode?  @relation("FormulaTree", fields: [parentId], references: [id], onDelete: Cascade)
+  children    FormulaNode[] @relation("FormulaTree")
+
+  @@index([variableId])
+  @@index([parentId])
+  @@index([refVariableId])
+  @@map("formula_node")
+}
+
+/// One authored value. `dimensionKey` is why a dimensioned input can be stored
+/// at all — without it `New Accounts by plan` has nowhere to put its members.
+model VariableInput {
+  id           String   @id @default(uuid())
+  variableId   String
+  /// `""` is the undimensioned row (`TOTAL` in `lib/model/types.ts`).
+  dimensionKey String   @default("")
+  period       DateTime @db.Date
+  value        Decimal  @db.Decimal(20, 6)
+  variable     Variable @relation(fields: [variableId], references: [id], onDelete: Cascade)
+
+  @@unique([variableId, dimensionKey, period])
+  @@index([variableId])
+  @@map("variable_input")
+}
+
+/// §1.5. A cache, never a source of truth: a row past `staleAt` is recomputed
+/// rather than trusted.
+model VariableSeries {
+  id           String    @id @default(uuid())
+  variableId   String
+  scenarioId   String?
+  dimensionKey String    @default("")
+  values       Json
+  staleAt      DateTime?
+  computedAt   DateTime  @default(now())
+  variable     Variable  @relation(fields: [variableId], references: [id], onDelete: Cascade)
+  scenario     Scenario? @relation(fields: [scenarioId], references: [id], onDelete: Cascade)
+
+  @@unique([variableId, scenarioId, dimensionKey])
+  @@index([variableId])
+  @@map("variable_series")
+}
+
+model Scenario {
+  id        String             @id @default(uuid())
+  modelId   String
+  name      String
+  /// Scenarios branch from scenarios; the base case is the one with no parent.
+  parentId  String?
+  isBase    Boolean            @default(false)
+  model     Model              @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  parent    Scenario?          @relation("ScenarioTree", fields: [parentId], references: [id])
+  children  Scenario[]         @relation("ScenarioTree")
+  overrides ScenarioOverride[]
+  series    VariableSeries[]
+
+  @@unique([modelId, name])
+  @@index([modelId])
+  @@map("scenario")
+}
+
+/// §4. An overlay, never a copy. `value` is jsonb so an override can later hold
+/// a distribution (Monte Carlo) instead of a scalar without a migration.
+model ScenarioOverride {
+  id         String   @id @default(uuid())
+  scenarioId String
+  variableId String
+  value      Json
+  scenario   Scenario @relation(fields: [scenarioId], references: [id], onDelete: Cascade)
+  variable   Variable @relation(fields: [variableId], references: [id], onDelete: Cascade)
+
+  @@unique([scenarioId, variableId])
+  @@index([scenarioId])
+  @@map("scenario_override")
+}

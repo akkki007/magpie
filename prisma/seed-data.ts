@@ -1,16 +1,19 @@
-import { add, div, lit, mul, prior, ref, sub } from "./formula";
-import { TOTAL } from "./types";
-import type { Model, Period, Variable } from "./types";
+import { add, div, lit, mul, prior, ref, sub } from "../lib/model/formula";
+import { TOTAL } from "../lib/model/types";
+import type { Model, Period, Variable } from "../lib/model/types";
 
 /**
  * "Revenue Model 2026" — the model behind `designs/modelling-1.jpg`.
  *
- * **This file is scaffolding, and it is honest scaffolding.** It builds the
- * same object M0's query will return (`docs/modelling-plan.md` M0), so the swap to
- * Postgres is a change of source and not a rewrite of anything above it. What
- * it is *not* is a table of pre-baked display numbers: every figure in the grid
- * is computed by `engine.ts` from these inputs, which is what makes editing a
- * churn assumption move sixty cells.
+ * **Seed data, not application code.** This lived in `lib/model` and was imported by the
+ * workspace page until M0.5 moved it here and the page started querying Postgres. It runs
+ * exactly once, from `bun run seed`, and nothing in `app/` or `lib/` may import it — that
+ * separation is what stops the fixture quietly becoming the fallback the day a query breaks.
+ *
+ * It was honest scaffolding: it builds the same object the query now returns, and the seed
+ * script proves them identical field for field. What it is *not* is a table of pre-baked
+ * display numbers — every figure in the grid is computed by `engine.ts` from these inputs,
+ * which is what makes editing a churn assumption move sixty cells.
  *
  * The model itself is a standard SaaS ARR waterfall, because that is what the
  * brief's first use case is:
@@ -82,9 +85,19 @@ function monthlyPeriods(startYear: number, count: number): Period[] {
 
 const HORIZON = 24;
 
-/** Deterministic, so the server render and the client hydration agree. */
+/**
+ * Deterministic, so the server render and the client hydration agree — and rounded to six
+ * decimal places, because that is what `numeric(20,6)` stores (`docs/modelling-plan.md` §2).
+ *
+ * The shaping functions below are floats, so this used to author values like a churn rate of
+ * `0.010145423274166877`. That is spurious precision twice over: nobody types eighteen decimal
+ * places, and the column cannot hold them. M0.5's round-trip test caught it on its first run,
+ * which is exactly what that test is for — a fixture the database cannot represent is a
+ * fixture that was lying about what the product does.
+ */
+const STORABLE_DP = 1_000_000;
 const shape = (n: number, fn: (i: number) => number) =>
-  Array.from({ length: n }, (_, i) => fn(i));
+  Array.from({ length: n }, (_, i) => Math.round(fn(i) * STORABLE_DP) / STORABLE_DP);
 
 const flat = (n: number, value: number) => shape(n, () => value);
 
