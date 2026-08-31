@@ -1,55 +1,67 @@
-import { LayoutPanelTop, Settings, Star } from "lucide-react";
+import { History, MessageSquare, Settings, Star, Table2 } from "lucide-react";
 
 import { cn } from "@/lib/cn";
 
 /**
- * The 52px breadcrumb bar: where you are on the left, what you can do to this
- * object on the right. The crumb chip is a pastel label — organisational, never
- * semantic (docs/design-system.md §2).
+ * The 52px breadcrumb bar from `designs/modelling-1.jpg`: where you are on the
+ * left, what you can do to this object on the right.
+ *
+ * The right cluster is deliberately quiet — ghost icon buttons, no fills. In
+ * this system the loudest thing on a product screen is the numbers, and a row
+ * of chrome competing with them is the fastest way to make a finance tool feel
+ * like a website.
  */
 export function Topbar({
   workspace,
-  workspaceInitial,
   object,
+  meta,
 }: {
   workspace: string;
-  workspaceInitial: string;
   object: string;
+  /** e.g. "Edited 2d ago" — provenance, not an action. */
+  meta?: string;
 }) {
   return (
     <header className="flex h-[52px] shrink-0 items-center gap-2 border-b border-line px-4">
       <nav aria-label="Breadcrumb" className="flex min-w-0 items-center gap-2">
+        <Table2 className="h-4 w-4 shrink-0 text-ink-muted" strokeWidth={1.75} aria-hidden />
+        <span className="truncate text-[14px] text-ink-2">{workspace}</span>
+        <span className="text-ink-faint">/</span>
         <span
           aria-hidden
-          className="grid h-5 w-5 shrink-0 place-items-center rounded-chip bg-chip-amber text-[11px] font-semibold text-ink"
+          className="grid h-5 w-5 shrink-0 place-items-center rounded-chip bg-chip-sky text-[10px] font-semibold text-ink"
         >
-          {workspaceInitial}
+          {object.slice(0, 1)}
         </span>
-        <span className="truncate text-[15px] font-medium text-ink">{workspace}</span>
-        <span className="text-ink-faint">/</span>
-        <LayoutPanelTop
-          className="h-4 w-4 shrink-0 text-ink-muted"
-          strokeWidth={1.75}
-          aria-hidden
-        />
-        <span className="truncate text-[15px] font-medium text-ink">{object}</span>
+        <span aria-current="page" className="truncate text-[14px] font-medium text-ink">
+          {object}
+        </span>
       </nav>
 
       <div className="ml-auto flex items-center gap-1">
+        {meta && <span className="mr-1 hidden text-[12px] text-ink-faint md:block">{meta}</span>}
         <button
           type="button"
-          className="rounded-button px-2.5 py-1.5 text-[13px] font-medium text-ink-muted transition-colors hover:bg-hover hover:text-ink"
+          className="rounded-button px-2.5 py-1.5 text-[13px] font-medium text-ink-2 transition-colors duration-150 hover:bg-hover"
         >
           Share
         </button>
-        {[Star, Settings].map((Icon, i) => (
+        {(
+          [
+            [History, "Version history"],
+            [MessageSquare, "Comments"],
+            [Star, "Favourite"],
+            [Settings, "Model settings"],
+          ] as const
+        ).map(([Icon, label]) => (
           <button
-            key={i}
+            key={label}
             type="button"
-            aria-label={i === 0 ? "Favourite" : "Settings"}
+            aria-label={label}
+            title={label}
             className={cn(
               "grid h-8 w-8 place-items-center rounded-control",
-              "text-ink-muted transition-colors hover:bg-hover hover:text-ink",
+              "text-ink-muted transition-colors duration-150 hover:bg-hover hover:text-ink",
             )}
           >
             <Icon className="h-4 w-4" strokeWidth={1.75} />

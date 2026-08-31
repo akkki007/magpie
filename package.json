@@ -12,7 +12,8 @@
     "db:migrate": "prisma migrate dev",
     "db:studio": "prisma studio",
     "auth:tables": "bun run scripts/auth-tables.ts",
-    "mail:check": "bun run scripts/mail-check.ts"
+    "mail:check": "bun run scripts/mail-check.ts",
+    "calc:check": "bun run scripts/calc-check.ts"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.10.0",

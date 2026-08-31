@@ -156,7 +156,7 @@ export const path: Phase[] = [
   {
     id: "M",
     title: "Modelling",
-    goal: "One engine and six templates, not six features. The full reasoning is in modelling/main.md; these are its build phases as tasks. M0–M2 are the real project — everything after is mechanical if the command bus in §1.3 is respected.",
+    goal: "One engine and six templates, not six features. The full reasoning is in docs/modelling-plan.md; these are its build phases as tasks. M0–M2 are the real project — everything after is mechanical if the command bus in §1.3 is respected.",
     detailed: true,
     tasks: [
       {
@@ -169,7 +169,7 @@ export const path: Phase[] = [
       {
         id: "M1",
         title: "The variable grid, on live data",
-        outcome: "`components/app/variable-grid.tsx` renders from the database instead of `lib/demo/dashboard.ts`, with groups, formats, and inline editing of INPUT rows.",
+        outcome: "`components/modelling/*` renders from the database instead of `lib/model/revenue-model.ts`. The grid itself — groups, dimensions, sticky columns, inline editing of INPUT rows — is built; what is missing is the query behind it.",
         status: "todo",
         needs: ["M0"],
         teaches: "Virtualising both axes before the grid is worth virtualising, sticky columns, and why a fixture-shaped component is cheap to switch over and a fixture-shaped API is not.",
@@ -177,7 +177,7 @@ export const path: Phase[] = [
       {
         id: "M2",
         title: "The calculation engine",
-        outcome: "`lib/calc`: AST parser and printer, dependency DAG, topological evaluation, time functions, and aggregation rollup. Pure TypeScript, no database.",
+        outcome: "`lib/model/engine.ts` + `grain.ts`: evaluation, time functions, cycle detection and aggregation rollup exist and are checked by `bun run calc:check`. Still missing: the parser that turns typed text into an AST.",
         status: "todo",
         needs: ["M1"],
         teaches: "Why formulas are stored as trees with ID references and never as strings, cycle detection, and the golden-file tests that stop OPENING/CLOSING being silently wrong at the quarter.",

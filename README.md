@@ -17,8 +17,9 @@ Honest status, because a README that overstates is worse than no README.
 | Landing page | **Built.** `/` — the full marketing surface. |
 | Design system | **Built.** Tokens in `app/globals.css`, taste in `docs/design-system.md`. |
 | Auth | **Built.** Email + password, magic link, email verification, database sessions. |
-| Dashboard | **Built against fixtures.** `/workspace` reproduces `designs/proto-screen-1.jpg`; numbers come from `lib/demo/dashboard.ts`. |
-| Modelling engine | **Planned, not built.** No `Model` table, no formula AST, no evaluator. `modelling/main.md` §9 specifies the next slice. |
+| Modelling grid | **Built.** `/workspace` reproduces `designs/modelling-1.jpg` — groups, dimensions, sticky columns, inline editing, undo, scenarios, grain switching. |
+| Modelling engine | **Built, in memory.** AST formulas, cell-level evaluation, aggregation rollup and a command bus in `lib/model`. `bun run calc:check` asserts the rollup. |
+| Modelling persistence | **Planned, not built.** No `Model` table — the module resets on reload. `docs/modelling-plan.md` M0 is the next slice. |
 | Organisations / roles | **Planned.** `docs/auth-plan.md` §3; tasks A3–A6. |
 | Learning site | **Built.** `/learning` — the lessons written alongside the code. |
 
@@ -107,8 +108,8 @@ proxy.ts       Next 16 middleware: coarse redirects only, never the security che
   `docs/auth-plan.md` §4.
 - **Database sessions, not JWTs.** A finance workspace needs instant revocation and role
   changes that take effect now. `session.cookieCache` stays off for the same reason.
-- **Formulas will be stored as ASTs with ID references, never strings.** Renaming a
-  variable must not break sixty formulas. `modelling/main.md` §1.1.
+- **Formulas are stored as ASTs with ID references, never strings.** Renaming a variable
+  must not break sixty formulas. `docs/modelling-plan.md` §1.1.
 - **One command bus for humans and agents.** Undo, audit, version history, collaboration
   and AI editing are one mechanism, not five. §1.3.
 - **AI output is a proposal, not a write.** An agent run produces a `PROPOSED` ChangeSet a
