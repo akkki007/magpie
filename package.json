@@ -17,7 +17,8 @@
     "recon:seed": "bun run scripts/recon-seed.ts",
     "recon:ingest": "bun run scripts/recon-ingest.ts",
     "recon:match": "bun run scripts/recon-match.ts",
-    "recon:eval": "bun run scripts/recon-eval.ts"
+    "recon:eval": "bun run scripts/recon-eval.ts",
+    "recon:agent": "bun run scripts/recon-agent.ts"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.10.0",
@@ -30,11 +31,13 @@
     "mermaid": "^11.17.2",
     "next": "16.3.3",
     "nodemailer": "^9.0.6",
+    "openai": "^7.8.0",
     "pg": "^8.23.0",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "shiki": "^4.4.3",
-    "sonner": "^2.0.8"
+    "sonner": "^2.0.8",
+    "zod": "^4.5.4"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",

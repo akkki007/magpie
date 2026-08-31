@@ -61,10 +61,13 @@ export type Outcome = "AUTO_MATCHED" | "PROPOSED" | "EXCEPTION";
 /**
  * Which pass produced a result.
  *
- * `T3` is missing on purpose — that is the LLM adjudication tier, and it does not exist
- * yet. Everything unresolved here lands in `T4`, which is exactly the queue R4 will read.
+ * `T3` is the adjudication tier (R4). Nothing in this file ever produces it — the
+ * deterministic passes stop at `T2` and hand their ranked candidates on — but the type lives
+ * here because a `MatchResult` is a `MatchResult` whichever tier made it, and the scoreboard
+ * must be unable to tell the difference. That is what makes the ablation in §A8 a comparison
+ * rather than two incomparable reports.
  */
-export type Tier = "T0" | "T1" | "T2" | "T4";
+export type Tier = "T0" | "T1" | "T2" | "T3" | "T4";
 
 export type MatchResult = {
   lane: Lane;
@@ -1388,7 +1391,7 @@ function summarise(
   input: MatchInput,
   elapsedMs: number,
 ): MatchRun["stats"] {
-  const byTier: Record<Tier, number> = { T0: 0, T1: 0, T2: 0, T4: 0 };
+  const byTier: Record<Tier, number> = { T0: 0, T1: 0, T2: 0, T3: 0, T4: 0 };
   const byOutcome: Record<Outcome, number> = { AUTO_MATCHED: 0, PROPOSED: 0, EXCEPTION: 0 };
   const lanes: Lane[] = ["PAYMENT_TO_SETTLEMENT", "SETTLEMENT_TO_BANK", "SETTLEMENT_TO_LEDGER"];
   const byLane = Object.fromEntries(

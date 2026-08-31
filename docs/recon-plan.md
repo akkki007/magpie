@@ -54,8 +54,12 @@
 > is a number that exists before the model does: match rate to 100% and class accuracy to
 > 100%, *only* if precision stays at 100%. That is the §A8 ablation.
 >
-> **R4 (the agent) is next.** The modelling engine this ends in is built:
-> `docs/modelling-plan.md`.
+> **R4 is built and unproven.** The adjudication tier, its validation gate and the ablation
+> harness all exist; the gate's ten rejection paths are exercised by `recon:agent --dry-run`
+> with no key and no network. The live path has never run — there is no API key on this
+> machine — so the scoreboard above is still the deterministic one and no claim is made about
+> a model. One live run turns the headroom into a verdict. The modelling engine this ends in
+> is built: `docs/modelling-plan.md`.
 
 ---
 
@@ -408,6 +412,56 @@ only: 100% precision, 0% false matches, 98.6% match rate, 92.4% class accuracy, 
 escalated with the correct candidate ranked first in all 6. R4 succeeds if match rate and
 class accuracy reach 100% and precision does not move; it fails if it closes those six by
 becoming willing to guess, and the false-match rate is what will say so.
+
+*Built, and unproven.* Every part of the tier exists and everything that can be checked
+without a provider has been. **The live path has never run — there is no API key on this
+machine — so no accuracy claim is made and the "done when" above is not yet met.**
+
+| File | What it is |
+|---|---|
+| `lib/recon/adjudicate.ts` | Zod schemas, the prompt, the validation gate, and the fold-back. **No SDK import.** |
+| `lib/recon/openai.ts` | The only file that knows which vendor answers. Batched, structured output, usage and latency. |
+| `scripts/recon-agent.ts` | `--dry-run` gate check, `--replay`, live. Writes a cassette. |
+| `recon:eval --with-agent` | The ablation: both arms, one scorer. |
+
+Four decisions worth recording.
+
+**The provider is one file, and that boundary paid for itself immediately.** Everything that
+decides whether the tier is *safe* — schema, prompt, gate — sits in `adjudicate.ts` with no
+SDK import. This plan specified Claude; the keys available were OpenAI's; the swap touched
+one file. A provider change must not be able to quietly alter what counts as an acceptable
+match.
+
+**Structured output, not a tool loop.** R4.1 asked for `getRecord` / `findCandidates` /
+`proposeMatch` / `flagException` as tool schemas. A tool loop is the wrong shape here: §A1
+already hands the model at most five candidates *with their evidence*, so `getRecord` and
+`findCandidates` would only re-fetch what is in the prompt, and §A6 explicitly forbids a call
+per record. So the escalations go up batched, and one structured reply comes back. The Zod
+schemas survive as R4.1 intended — one definition, used both as the wire format the provider
+enforces and as the parser the gate runs — and the model still cannot write anything.
+
+**The gate has ten rejection paths and all ten are exercised on every machine.**
+`recon:agent --dry-run` feeds it one deliberately broken answer per path: an invented
+settlement id (§A7), a stated gap that disagrees with the records (§A4), an empty evidence
+line, a match naming nothing, a decline naming something anyway, confidence below the
+threshold, a missing answer, a candidate outside tolerance, and a decline. It needs no key and
+no network, and it **writes no cassette** — a scripted answer must never be able to reach a
+scoreboard. One check is unreachable in the real pipeline and kept anyway: the ranking pass
+only offers candidates inside the tolerance, but the gate must not trust the packet builder,
+because an invariant that depends on an upstream pass having filtered correctly is not an
+invariant.
+
+**Runs are recorded, so the ablation is free and reproducible.** A live run writes its raw
+decisions to `data/recon/adjudications.json`; `--replay` and the ablation re-gate them rather
+than trusting what was recorded, so tightening the gate shows up on the next replay instead of
+being frozen into an old recording. This is the same argument as R0.2's seeded RNG: an eval
+you cannot reproduce is not an eval.
+
+*What remains:* one live run with a key, then `recon:eval --with-agent` for the verdict — which
+prints REJECT if the match rate rises while the false-match rate does too. The hybrid arm's
+plumbing was verified against a synthetic cassette (6 of 6 accepted, match rate 98.6% → 100%,
+class accuracy 92.4% → 100%, precision and false-match rate unchanged), which proves the wiring
+and says nothing whatsoever about a model.
 
 ### R5 — The review queue
 

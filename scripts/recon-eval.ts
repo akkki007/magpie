@@ -14,6 +14,7 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { applyAdjudications, gate, packetsFrom } from "../lib/recon/adjudicate";
 import { ingestSources, type SourceName } from "../lib/recon/ingest";
 import { runMatch } from "../lib/recon/match";
 import { toIndianDecimal } from "../lib/recon/money";
@@ -308,6 +309,81 @@ if (process.argv.includes("--self-check")) {
   if (failures.length > 0) process.exit(1);
 }
 
+/* ── The ablation (R4.5, §A8) ─────────────────────────────────────────────*/
+
+/**
+ * The same batch, scored with and without the adjudication tier, by the same scorer.
+ *
+ * §A8 calls this the money slide, and the reason it works is that a `MatchResult` carries no
+ * hint of which tier produced it — so the scoreboard cannot tell a rule's match from a
+ * model's, and the comparison is a comparison rather than two reports that happen to sit next
+ * to each other.
+ *
+ * The verdict has two halves and both must hold. Match rate has to rise, **and the
+ * false-match rate must not.** A tier that closes the gap by becoming willing to guess has
+ * failed even when the headline number improves, which is exactly the trade §6 warns about
+ * and exactly what a single-metric slide would hide.
+ */
+let ablation: Record<string, unknown> | null = null;
+
+if (process.argv.includes("--with-agent")) {
+  const cassette = join(dir, "adjudications.json");
+  if (!existsSync(cassette)) {
+    console.log(
+      [
+        "",
+        "Ablation — no cassette.",
+        `  ${cassette} does not exist, so there is nothing to compare against and this prints no`,
+        "  numbers. Record one with `bun run recon:agent` (needs OPENAI_API_KEY), then re-run with",
+        "  --with-agent. `bun run recon:agent --dry-run` checks the validation gate without a",
+        "  provider, but deliberately writes no cassette: scripted answers must never reach a score.",
+      ].join("\n"),
+    );
+  } else {
+    const recorded = JSON.parse(readFileSync(cassette, "utf8"));
+    const packets = packetsFrom(run.results, batch.bank, batch.settlements);
+    // Re-gated on every replay rather than trusting what was recorded, so tightening the gate
+    // shows up here immediately instead of being frozen into an old recording.
+    const adjudicated = gate(packets, { decisions: recorded.decisions }, batch.settlements);
+    const hybridResults = applyAdjudications(run.results, adjudicated);
+    const hybrid = score(hybridResults, truth, batch.bank);
+
+    const row = (label: string, card: typeof hybrid) => {
+      const o = card.overall;
+      const classAccuracy = o.classCorrect / Math.max(1, o.classCorrect + o.classWrong.length);
+      console.log(
+        `  ${label.padEnd(24)} ${pad(percent(o.precision), 9)} ${pad(percent(o.falseMatchRate), 11)} ${pad(percent(o.matchRate), 10)} ${pad(percent(classAccuracy), 8)} ${pad(o.produced.PROPOSED, 10)}`,
+      );
+      return { precision: o.precision, falseMatchRate: o.falseMatchRate, matchRate: o.matchRate, classAccuracy, proposed: o.produced.PROPOSED };
+    };
+
+    console.log(`\nAblation — the same batch, scored by the same scorer, ${recorded.model}`);
+    console.log("  arm                      precision  false-match  match rate  class    escalated");
+    console.log(rule(74));
+    const rulesOnly = row("rules only", card);
+    const withAgent = row("rules + adjudication", hybrid);
+    console.log(rule(74));
+
+    const accepted = adjudicated.filter((entry) => entry.ok).length;
+    const gated = adjudicated.length - accepted;
+    console.log(
+      `\n  ${accepted} decision(s) accepted, ${gated} rejected by the validation gate before they could become matches.`,
+    );
+
+    const better = withAgent.matchRate > rulesOnly.matchRate;
+    const safe = withAgent.falseMatchRate <= rulesOnly.falseMatchRate;
+    console.log(
+      better && safe
+        ? `  Verdict: the tier earned its place — match rate ${percent(rulesOnly.matchRate)} → ${percent(withAgent.matchRate)} with the false-match rate still at ${percent(withAgent.falseMatchRate)}.`
+        : !safe
+          ? `  Verdict: REJECT. Match rate went ${percent(rulesOnly.matchRate)} → ${percent(withAgent.matchRate)} but the false-match rate rose ${percent(rulesOnly.falseMatchRate)} → ${percent(withAgent.falseMatchRate)}. That is not a win; it is a matcher that learned to guess.`
+          : `  Verdict: no gain. Match rate did not move (${percent(withAgent.matchRate)}), so the tier is cost without benefit on this batch.`,
+    );
+
+    ablation = { model: recorded.model, accepted, gatedOut: gated, rulesOnly, withAgent, verdict: better && safe ? "EARNED" : safe ? "NO_GAIN" : "REJECT" };
+  }
+}
+
 /* ── The report on disk ───────────────────────────────────────────────────*/
 
 const report = {
@@ -337,6 +413,7 @@ const report = {
     right: entry.result.right,
     evidence: entry.result.evidence,
   })),
+  ablation,
   queue: run.results
     .filter((result) => result.outcome !== "AUTO_MATCHED")
     .sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount))
