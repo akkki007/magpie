@@ -63,6 +63,20 @@ export type Tolerances = {
     minLength: number;
   };
 
+  /**
+   * The escalation packet handed to a judgement tier (§A1: *at most 5 candidates with their
+   * evidence*).
+   *
+   * `slackPaise` is deliberately tiny. It is not a matching tolerance — nothing is matched
+   * on it — it only decides which candidates are worth a human's or a model's attention. Set
+   * it wide and every unexplained credit arrives with five irrelevant settlements attached,
+   * which is how a review queue becomes noise.
+   */
+  escalation: {
+    slackPaise: Paise;
+    maxCandidates: number;
+  };
+
   search: {
     /**
      * Nodes the bounded subset search may visit before it gives up. It reports that it
@@ -95,6 +109,7 @@ export const TOLERANCES: Tolerances = {
   bank: { onTimeDays: 1, lateDays: 7, splitSpanDays: 3 },
   amount: { roundingPaise: 5, tdsPercentOfGross: 1 },
   reference: { maxEditDistance: 2, minLength: 8 },
+  escalation: { slackPaise: 10, maxCandidates: 5 },
   search: { maxNodes: 200_000, maxSubsetSize: 3, maxCombinatorialSize: 4 },
   autoApply: 0.85,
 };
@@ -146,6 +161,18 @@ export const CONFIDENCE = {
   DATE_POOL_TIED: 0.6,
   /** More than one candidate fits and nothing in the data separates them. */
   AMBIGUOUS: 0.4,
+  /**
+   * The reference was buried in the narration rather than in the reference field.
+   *
+   * Worth the same as a transposed reference: once the UTR is found the identification is
+   * exact, and only the amount needed a rounding allowance.
+   */
+  NARRATION_REFERENCE: 0.94,
+  /**
+   * Ranked candidates, no decision. Sits far below the auto-apply line because the whole
+   * point is that a rule wide enough to settle these is a rule wide enough to be dangerous.
+   */
+  ESCALATED: 0.3,
 } as const;
 
 /* ── The payout calendar ──────────────────────────────────────────────────*/

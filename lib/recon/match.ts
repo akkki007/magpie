@@ -176,8 +176,10 @@ export function runMatch(input: MatchInput, config: Tolerances = TOLERANCES): Ma
  *   T1  the statement says which settlement it is, and the amount is explainably off
  *   T1  the statement almost says which settlement it is (a transposed reference)
  *   T1  the statement says nothing, and a unique amount and date have to carry it
+ *   T1  the reference is in the narration rather than the reference column
  *   T1  a debit no payout claimed, which is a deduction rather than a settlement
  *   T2  one settlement paid as several credits, or one credit covering several
+ *   T2  ranked candidates and no decision, for the tier that can judge
  *   T4  nothing explains it, so say so with a reason
  * ```
  */
@@ -194,6 +196,18 @@ function matchBankLane(
 
   const openSettlements = new Set(input.settlements.map((s) => s.id));
   const openCredits = new Set(input.bank.map((c) => c.id));
+
+  /**
+   * Records that were escalated rather than matched.
+   *
+   * They stay *open*, because nothing has resolved them — but they have been reported, and
+   * T4 must not report them again. Without this every escalated credit arrived in the queue
+   * twice, once as a ranked proposal and once as an unexplained exception, with its
+   * settlement showing up a third time as never banked. Three queue entries for one problem,
+   * and the cash-at-risk total inflated by roughly triple.
+   */
+  const escalatedCredits = new Set<string>();
+  const escalatedSettlements = new Set<string>();
 
   const settle = (settlements: Settlement[], credits: BankCredit[]) => {
     for (const s of settlements) openSettlements.delete(s.id);
@@ -460,6 +474,65 @@ function matchBankLane(
       ],
       class: ambiguous ? null : "TYPO_UTR",
       amount: credit.amount,
+    });
+  }
+
+  /* ── T1, step 3b: the reference is in the narration ─────────────────────*/
+
+  /**
+   * Banks put the UTR in the narration constantly, and then leave the reference column
+   * empty. That is not an ambiguity — it is a reference, filed in the wrong place — so it
+   * gets a rule rather than an escalation (R0.5).
+   *
+   * The test is substring containment after normalisation, which is why it survives every
+   * way a bank mangles a reference: `RZPX 9093 7885648`, `rzpx90937885648`,
+   * `RZPX9093-7885648` and `UTR RZPX90937885648 DT` all normalise to a string containing the
+   * UTR. Extracting reference-shaped tokens with a pattern instead would need one pattern
+   * per gateway and would still lose to the next bank's formatting.
+   *
+   * It is quadratic over what earlier tiers could not resolve, which by this point is a
+   * couple of dozen records on each side — the whole reason the tiers escalate in this order.
+   */
+  for (const credit of input.bank) {
+    if (!isOpenCredit(credit) || credit.amount === 0) continue;
+    if (normaliseReference(credit.reference) !== "") continue;
+
+    const narration = normaliseReference(credit.description);
+    const found = input.settlements.filter((settlement) => {
+      if (!isOpenSettlement(settlement)) return false;
+      const utr = normaliseReference(settlement.utr);
+      if (utr.length < config.reference.minLength) return false;
+      if (!narration.includes(utr)) return false;
+      const late = daysBetween(settlement.settledAt, credit.valueDate);
+      return late >= 0 && late <= config.bank.lateDays;
+    });
+
+    if (found.length !== 1) continue;
+    const settlement = found[0];
+    const gap = credit.amount - settlement.net;
+    if (Math.abs(gap) > config.amount.roundingPaise) continue;
+
+    const identity = identityEvidence(settlement);
+    settle([settlement], [credit]);
+    emit({
+      lane,
+      tier: "T1",
+      rule: "T1_NARRATION_REFERENCE",
+      outcome: applied(CONFIDENCE.NARRATION_REFERENCE),
+      confidence: CONFIDENCE.NARRATION_REFERENCE,
+      left: [settlement.id],
+      right: [credit.id],
+      inputs: [credit.id, settlement.id],
+      evidence: [
+        `the reference column is empty, and the settlement UTR ${settlement.utr} appears inside the narration: "${credit.description}"`,
+        gap === 0
+          ? `amount ties exactly at ${money(settlement.net)}`
+          : `amount is ${delta(credit.amount, settlement.net)} against net ${money(settlement.net)}, inside the ${config.amount.roundingPaise} paise rounding tolerance`,
+        `no other unmatched settlement's UTR appears in this narration`,
+        ...identity.evidence,
+      ],
+      class: "UTR_IN_NARRATION",
+      amount: settlement.net,
     });
   }
 
@@ -738,10 +811,76 @@ function matchBankLane(
     });
   }
 
+  /* ── T2, step 7: rank the candidates and decline ────────────────────────*/
+
+  /**
+   * The escalation packet (§A1, §A2): **at most five candidates with their evidence**, and
+   * no decision.
+   *
+   * This is the pass that makes the whole tiering argument concrete. What reaches it is a
+   * credit with real evidence pointing at a settlement — an amount a few paise out, a date
+   * in the window — and *nothing that identifies it*. A rule could take it: allow rounding
+   * without a reference and the match appears. That rule would also, on a real month's
+   * statement, quietly marry two unrelated payouts of similar value, and §6 names that the
+   * worst failure in the system because nobody ever sees it.
+   *
+   * So the deterministic tiers stop here, having done the expensive part — narrowing 30,000
+   * candidates to five and stating why each one is plausible. Whether the answer is *"the
+   * narration says RZPSPL and that is this company"* is a judgement, which is what R4's tier
+   * is for, and it will arrive with a bounded, grounded candidate set rather than a dataset
+   * (§A7: it may only reference ids it was given).
+   */
+  for (const credit of input.bank) {
+    if (!isOpenCredit(credit) || credit.amount === 0) continue;
+
+    const window = windowAround(credit.valueDate, config.bank.lateDays, 0);
+    const candidates = settlementIndex
+      .nearAmount(credit.amount, config.escalation.slackPaise, window)
+      .filter(isOpenSettlement)
+      .map((settlement) => ({
+        settlement,
+        gap: credit.amount - settlement.net,
+        late: daysBetween(settlement.settledAt, credit.valueDate),
+      }))
+      .sort(
+        (a, b) => Math.abs(a.gap) - Math.abs(b.gap) || a.late - b.late || (a.settlement.id < b.settlement.id ? -1 : 1),
+      )
+      .slice(0, config.escalation.maxCandidates);
+
+    if (candidates.length === 0) continue;
+
+    const best = candidates[0];
+    escalatedCredits.add(credit.id);
+    escalatedSettlements.add(best.settlement.id);
+    emit({
+      lane,
+      tier: "T2",
+      rule: "T2_ESCALATION_CANDIDATES",
+      outcome: "PROPOSED",
+      confidence: CONFIDENCE.ESCALATED,
+      // The ranking's top pick, so a scoreboard can measure whether the ordering is any
+      // good before a model is ever involved.
+      left: [best.settlement.id],
+      right: [credit.id],
+      inputs: [credit.id, ...candidates.map((row) => row.settlement.id)],
+      evidence: [
+        `${money(credit.amount)} credited ${credit.valueDate} with no usable reference: "${credit.description}"`,
+        `${candidates.length} unmatched settlement(s) are within ${config.escalation.slackPaise} paise and ${config.bank.lateDays} days:`,
+        ...candidates.map(
+          (row) =>
+            `  ${row.settlement.id} — net ${money(row.settlement.net)} (${row.gap === 0 ? "exact" : delta(credit.amount, row.settlement.net)}), settled ${row.settlement.settledAt}${row.late === 0 ? " (same day)" : ` (${row.late} day(s) earlier)`}, UTR ${row.settlement.utr || "(none)"}`,
+        ),
+        `no rule can settle this safely: matching on an amount a few paise out with nothing to identify it is how a silent false match gets made, so this is ranked and left for judgement`,
+      ],
+      class: null,
+      amount: credit.amount,
+    });
+  }
+
   /* ── T4: everything left, with a reason ─────────────────────────────────*/
 
   for (const credit of input.bank) {
-    if (!isOpenCredit(credit)) continue;
+    if (!isOpenCredit(credit) || escalatedCredits.has(credit.id)) continue;
     const narration = credit.description.toUpperCase();
     const isGateway = narration.includes("RAZORPAY");
     emit({
@@ -766,7 +905,7 @@ function matchBankLane(
   }
 
   for (const settlement of input.settlements) {
-    if (!isOpenSettlement(settlement)) continue;
+    if (!isOpenSettlement(settlement) || escalatedSettlements.has(settlement.id)) continue;
     const window = windowAround(settlement.settledAt, 0, config.bank.lateDays);
     const near = bankIndex
       .nearAmount(settlement.net, config.amount.roundingPaise, window)

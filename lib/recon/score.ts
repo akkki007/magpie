@@ -244,35 +244,45 @@ export function score(
       const wantsMatch = link.expect === "MATCH";
       const claimsMatch = best.outcome !== "EXCEPTION";
 
+      let verdict: Verdict;
       if (wantsMatch && claimsMatch) {
-        const verdict = best.outcome === "AUTO_MATCHED" ? "AUTO_CORRECT" : "PROPOSED_CORRECT";
+        verdict = best.outcome === "AUTO_MATCHED" ? "AUTO_CORRECT" : "PROPOSED_CORRECT";
         if (best.outcome === "AUTO_MATCHED") lane.autoCorrect++;
         else lane.proposedCorrect++;
-        scored.push({ link, verdict, result: best });
       } else if (!wantsMatch && !claimsMatch) {
+        verdict = "EXCEPTION_CORRECT";
         lane.exceptionCorrect++;
-        scored.push({ link, verdict: "EXCEPTION_CORRECT", result: best });
       } else if (!wantsMatch && claimsMatch) {
         // The key says raise this; the matcher resolved it. The dangerous direction.
         if (best.outcome === "AUTO_MATCHED") {
+          verdict = "FALSE_MATCH";
           lane.falseMatches.push({ result: best, reason: "SHOULD_BE_EXCEPTION" });
-          scored.push({ link, verdict: "FALSE_MATCH", result: best });
         } else {
+          verdict = "ESCALATED";
           lane.escalated++;
-          scored.push({ link, verdict: "ESCALATED", result: best });
         }
       } else {
         // The key says match this; the matcher raised it. Costs recall, not precision.
+        verdict = "MISSED";
         lane.missed++;
-        scored.push({ link, verdict: "MISSED", result: best });
       }
 
-      if (link.class && best.class !== link.class) {
+      /**
+       * One entry per truth link, always.
+       *
+       * A class disagreement used to push a *second* entry for the same link, which the
+       * confusion matrix and the per-class table both happened to de-duplicate — so the
+       * double-count sat there harmlessly until something counted `scored` directly and
+       * reported six escalated links as twelve, and a match rate over 100%. A derived array
+       * that is only correct when every reader remembers to de-duplicate it is a trap.
+       */
+      const disagrees = link.class !== null && best.class !== link.class;
+      if (disagrees && link.class) {
         lane.classWrong.push({ expected: link.class, said: best.class, rule: best.rule });
-        scored.push({ link, verdict: scored[scored.length - 1].verdict, result: best, classSaid: best.class });
       } else if (link.class) {
         lane.classCorrect++;
       }
+      scored.push({ link, verdict, result: best, ...(disagrees ? { classSaid: best.class } : {}) });
       continue;
     }
 

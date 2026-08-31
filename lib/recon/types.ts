@@ -145,10 +145,19 @@ export type LedgerEntry = {
 /**
  * The planted failure modes (`docs/recon-plan.md` R0.3).
  *
- * Eight of these are **hard but resolvable** — a good matcher should still produce the
- * link, using a tolerance or a structural pass. Five are **genuine exceptions** that no
- * amount of cleverness should "resolve", and a matcher that claims to have matched them is
- * producing a false match, which is the worst failure in the system because it is silent.
+ * They divide three ways, and the division is the whole architecture:
+ *
+ * - **Hard but resolvable by rules.** A tolerance or a structural pass produces the link,
+ *   and the arithmetic proves it. `TYPO_UTR`, `SPLIT_SETTLEMENT`, `UTR_IN_NARRATION`.
+ * - **Genuine exceptions.** No amount of cleverness should "resolve" these, and a matcher
+ *   that claims to have matched one is producing a false match — the worst failure in the
+ *   system, because it is silent. `FOREIGN_CREDIT`, `MISSING_LEDGER_ENTRY`.
+ * - **Resolvable, but not safely by a rule** (R0.5). The evidence is there and it is soft:
+ *   a mangled counterparty name, a payout described in prose, an amount a few paise out
+ *   with no reference to corroborate it. A rule wide enough to catch these is a rule wide
+ *   enough to make silent false matches, so the deterministic tiers rank candidates and
+ *   abstain — which is precisely the queue the LLM tier exists to work.
+ *   `DISGUISED_COUNTERPARTY`, `NARRATED_PAYOUT`.
  */
 export type FailureClass =
   | "MISSING_UTR"
@@ -165,7 +174,10 @@ export type FailureClass =
   | "ROUNDING_PAISE"
   | "MISSING_LEDGER_ENTRY"
   | "MISSING_RECON_ROW"
-  | "MISATTRIBUTED_PAYMENT";
+  | "MISATTRIBUTED_PAYMENT"
+  | "UTR_IN_NARRATION"
+  | "DISGUISED_COUNTERPARTY"
+  | "NARRATED_PAYOUT";
 
 /** Which lane a link belongs to. Match rate is reported per lane, never as one blur. */
 export type Lane =
@@ -230,4 +242,7 @@ export const FAILURE_LABEL: Record<FailureClass, string> = {
   MISSING_LEDGER_ENTRY: "Settled but never posted",
   MISSING_RECON_ROW: "Settled but never itemised",
   MISATTRIBUTED_PAYMENT: "Payment itemised against the wrong payout",
+  UTR_IN_NARRATION: "Reference buried in the narration",
+  DISGUISED_COUNTERPARTY: "Gateway payout under an unrecognisable name",
+  NARRATED_PAYOUT: "Payout described in prose, not referenced",
 };

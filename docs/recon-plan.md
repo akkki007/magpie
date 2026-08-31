@@ -32,18 +32,29 @@
 > | `scripts/recon-match.ts` | Per-tier counts, timing, and the exception queue |
 > | `scripts/recon-eval.ts` | The scoreboard, and a self-check that it can fail |
 >
-> Default run: 5,000 payments → **11,258 records** across seven files, **69 planted failures
-> across all 15 classes** plus 5 deliberately malformed rows, 456 links to score. Ingestion
-> reads 11,263 rows and rejects exactly the 5 planted ones. Matching produces 456 results in
-> ~32 ms, and `recon:eval` scores it at **100% auto-apply precision, a 0% false-match rate,
-> a 100% match rate on all three lanes, 100% exception recall and 100% class accuracy** —
-> 11,258 records end to end in ~200 ms, no model involved. `--self-check` corrupts the
-> matcher's own output to prove the scoreboard reacts.
+> Default run: 5,000 payments → **11,258 records** across seven files, **79 planted
+> failures across all 18 classes** plus 5 deliberately malformed rows, 456 links to score.
+> `recon:eval` scores the deterministic run at:
 >
-> **That perfect board is now the open problem, not the achievement.** §1.6 cuts both ways:
-> nothing left in the proposal lane means nothing in this batch needs judgement, so R4 has
-> no work and the §A8 ablation would show three identical bars. **The next task is planting
-> genuine ambiguity** — see R0.5. The modelling engine this ends in is built:
+> | | |
+> |---|---|
+> | Auto-apply precision | **100%** |
+> | False-match rate | **0%** |
+> | Match rate | **98.6%** — 100% on the payments and ledger lanes, 95.8% on the bank lane |
+> | Coverage including proposals | **100%** |
+> | Exception recall | **100%** (31 of 31) |
+> | Class accuracy | **92.4%** (73 of 79) |
+> | Escalation rate | **8.1%** — 6 proposals, 31 exceptions |
+> | Wall clock | ~200 ms end to end, no model involved |
+>
+> The 1.4% and the 7.6% are **deliberate, and they are R4's job.** Six links are cases no
+> rule can settle safely (R0.5): a payout under a mangled counterparty name, a payout
+> described in prose, each a few paise out with no reference. The deterministic tiers rank
+> the candidates, put the correct settlement first in all six, and decline — so R4's ceiling
+> is a number that exists before the model does: match rate to 100% and class accuracy to
+> 100%, *only* if precision stays at 100%. That is the §A8 ablation.
+>
+> **R4 (the agent) is next.** The modelling engine this ends in is built:
 > `docs/modelling-plan.md`.
 
 ---
@@ -244,16 +255,34 @@ with two different answers** on purpose:
 *Done when:* the lane matches on a reference rather than a calendar, and the calendar becomes
 an independent second derivation rather than the only one.
 
-**R0.5 — Plant genuine ambiguity.** *Next.* The batch is now fully solvable by deterministic
-rules, and §1.6 says that is a statement about the dataset. R4 needs cases where the rules
-*must* abstain and only judgement can decide — two same-day payouts of identical value with
-one missing UTR, a narration that names its payout in prose rather than a reference, a
-deduction that is explicable two ways. Until those exist, the hybrid cannot beat rules-only
-and the ablation has nothing to show.
-*Respect:* the abstention has to be genuine. A case the rules could resolve with one more
-tolerance is a missing rule, not an ambiguity.
+**R0.5 — Plant genuine ambiguity.** *Built.* The batch was fully solvable by deterministic
+rules, and §1.6 says that is a statement about the dataset: with nothing escalated, an
+adjudication tier cannot beat rules-only and the ablation shows three identical bars.
 
-### R1 — Ingest and normalise
+Three classes, split by the distinction that decides whether something is R2's problem or
+R4's:
+
+| Class | Who should resolve it, and why |
+|---|---|
+| `UTR_IN_NARRATION` | **A rule.** Banks put the UTR in the narration and leave the reference column empty constantly. That is a reference filed in the wrong place, not an ambiguity — so `T1_NARRATION_REFERENCE` was written for it and it matches at 0.94. |
+| `DISGUISED_COUNTERPARTY` | **Judgement.** A real payout whose narration never spells the gateway recognisably — `RZPSPL`, `R P SOFTWARE PVT LTD`, `RAZOR PAY SW`, `RAZORPY SOFTWRE`. No reference, amount a few paise out. |
+| `NARRATED_PAYOUT` | **Judgement.** No reference at all; the narration gives the transaction count and date in prose, sometimes as a numeral and sometimes spelled out. |
+
+The honest statement of why the last two are not rules: **they are individually resolvable,
+but only by widening a tolerance until it makes silent false matches.** Allow rounding with
+no reference at all and these six links appear — along with, on a real month's statement, the
+occasional marriage of two unrelated payouts of similar value, which §6 names the worst
+failure in the system precisely because nobody sees it. So the tiers narrow, rank and stop.
+
+Every instance is worded differently on purpose. One template is a regex waiting to be
+written; bank narrations vary without limit, and that variation is the thing a model handles
+and a pattern does not.
+
+*Done when:* the deterministic run escalates rather than guesses, and the headroom a
+judgement tier could close is a measurable number. It is: 6 links, correct candidate ranked
+first in all 6, printed by `recon:eval` on every run.
+
+### R1 — Ingest and normalise### R1 — Ingest and normalise
 
 **R1.1 — CSV ingestion** for each source (payments export, settlement report, bank
 statement, ledger), tolerant of the real messes: BOM, quoted commas, `dd/mm/yyyy`, `1,23,456.78`.
@@ -294,6 +323,15 @@ the plan as written, each for a reason:
 - **`inputs[]` may be summarised, `left`/`right` may not.** Capping a forty-payment batch to
   twenty-five ids still printed a confident match, and was simply the wrong link — §6's
   worst failure arriving through the reporting code rather than through a rule.
+
+*Two rules added by R0.5.* `T1_NARRATION_REFERENCE` finds a UTR buried anywhere in a
+narration by normalising both sides and testing containment — which survives every way a
+bank mangles a reference, where a token pattern needs one pattern per gateway and still loses
+to the next bank's formatting. `T2_ESCALATION_CANDIDATES` is the packet §A1 promises the model
+tier: at most five ranked candidates with their gaps, dates and references, and **no
+decision**. It also fixed a queue bug — an escalated credit was arriving in the queue three
+times, once as a proposal, once as an unexplained credit and once as its settlement never
+being banked, inflating cash-at-risk threefold.
 
 **One finding that belonged to R0, now fixed.** The payments lane had no reference on either
 side and was capped at 8.2% by the data rather than by the matcher — the whole argument is in
@@ -364,6 +402,12 @@ from R0.3 and one line of evidence (§A5).
 **R4.5 — The ablation harness** — the same batch three ways (§A8).
 *Done when:* the hybrid beats deterministic-only on match rate **without** raising the
 false-match rate.
+
+*The baseline is already measured*, which is the whole reason R3 came first. Deterministic
+only: 100% precision, 0% false matches, 98.6% match rate, 92.4% class accuracy, 6 links
+escalated with the correct candidate ranked first in all 6. R4 succeeds if match rate and
+class accuracy reach 100% and precision does not move; it fails if it closes those six by
+becoming willing to guess, and the false-match rate is what will say so.
 
 ### R5 — The review queue
 

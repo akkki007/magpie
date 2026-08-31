@@ -179,6 +179,30 @@ console.log(`  §6 wants that near 5%, so the tiering is sound: ${overall.produc
  *
  * Printing it here rather than in a plan nobody re-reads is the point.
  */
+/**
+ * What an adjudication tier could actually win, stated as a number before it is built.
+ *
+ * This is the R4 baseline and the §A8 ablation's left-hand bar. Every escalated link whose
+ * *correct* settlement the deterministic ranking already put first is a link a judgement tier
+ * can close without searching for anything — and the two figures either side of it are the
+ * ones that must both hold: match rate should rise, precision must not fall.
+ */
+const escalatedCorrect = card.scored.filter(
+  (row) => row.verdict === "PROPOSED_CORRECT" && row.link.expect === "MATCH",
+).length;
+
+if (overall.produced.PROPOSED > 0) {
+  console.log(
+    [
+      "",
+      `  Headroom for R4 — ${overall.produced.PROPOSED} link(s) escalated rather than auto-applied, and the ranking put the`,
+      `  correct settlement first in ${escalatedCorrect} of them. Closing those lifts the match rate from`,
+      `  ${percent(overall.matchRate)} to ${percent((overall.autoCorrect + escalatedCorrect) / overall.truthMatches)} and the class accuracy from ${percent(overall.classCorrect / Math.max(1, overall.classCorrect + overall.classWrong.length))} to 100%, and it is only a win if`,
+      `  precision stays at ${percent(overall.precision)}. That is the ablation, and it is measurable before a model exists.`,
+    ].join("\n"),
+  );
+}
+
 if (overall.precision === 1 && overall.matchRate === 1 && overall.produced.PROPOSED === 0) {
   console.log(
     [
@@ -294,6 +318,7 @@ const report = {
   cost: { llmCalls: 0, promptTokens: 0, completionTokens: 0, rupeesPerThousandRecords: 0 },
   headline: {
     precision: overall.precision,
+    escalatedWithCorrectTopCandidate: escalatedCorrect,
     falseMatchRate: overall.falseMatchRate,
     matchRate: overall.matchRate,
     coverage: overall.coverage,

@@ -73,6 +73,11 @@ const PLANT_SHARE: Record<FailureClass, number> = {
   // the only two classes that can touch the payments lane.
   MISSING_RECON_ROW: 0.03,
   MISATTRIBUTED_PAYMENT: 0.02,
+  // R0.5. The first is resolvable by a rule; the other two are the ones the LLM tier
+  // exists for, and every instance is worded differently on purpose.
+  UTR_IN_NARRATION: 0.03,
+  DISGUISED_COUNTERPARTY: 0.02,
+  NARRATED_PAYOUT: 0.02,
   DUPLICATE_CREDIT: 0.015,
   FOREIGN_CREDIT: 0.02,
   CHARGEBACK_DEDUCTION: 0.5, // share of chargebacks, not of settlements
@@ -723,6 +728,104 @@ function plant(context: PlantContext) {
       expect: "MATCH",
       class: null,
     });
+  }
+
+  /* ── R0.5: cases a rule cannot safely settle ──────────────────────────*/
+
+  /**
+   * The batch reached 100% on every lane, which §1.6 says is a statement about the dataset.
+   * These three classes are the answer, and they are deliberately not all the same kind of
+   * hard.
+   *
+   * The distinction that matters: a case a rule *could* catch is a missing rule, not an
+   * ambiguity. `UTR_IN_NARRATION` is one of those, so it is planted expecting a MATCH and a
+   * rule was written for it. The other two are resolvable **only by widening a tolerance far
+   * enough to make silent false matches** — an amount three paise out with no reference to
+   * corroborate it, matched on nothing but proximity. That is the trade the tiering exists
+   * to avoid, so the deterministic passes rank the candidates and decline, and the model
+   * decides case by case with the evidence in front of it.
+   *
+   * Every instance is phrased differently. One template would be a regex waiting to be
+   * written; the point is that bank narrations vary without limit.
+   */
+
+  /** A UTR the way a bank actually buries one: spaced, hyphenated, prefixed, lowercased. */
+  const buryUtr = (utr: string, variant: number) => {
+    const forms = [
+      `NEFT INWARD RAZORPAY SOFTWARE PVT LTD UTR ${utr}`,
+      `NEFT CR RAZORPAY SOFTWARE, REF: ${utr.slice(0, 4)} ${utr.slice(4, 8)} ${utr.slice(8)}`,
+      `RTGS INWARD RAZORPAY SOFTWARE PVT LTD/${utr.toLowerCase()}/SETTLEMENT`,
+      `IMPS RAZORPAY SOFTWARE PVT LTD - ${utr.slice(0, 8)}-${utr.slice(8)} - PAYOUT`,
+      `NEFT INWARD, RAZORPAY SOFTWARE PVT LTD, TXN ${utr} DT SETTLEMENT`,
+    ];
+    return forms[variant % forms.length];
+  };
+
+  for (const [index, settlement] of take(PLANT_SHARE.UTR_IN_NARRATION).entries()) {
+    const credit = creditFor(settlement);
+    credit.description = buryUtr(settlement.utr, index);
+    credit.reference = "";
+    // A few paise out as well, so the amount alone cannot carry the match and the buried
+    // reference has to do real work.
+    credit.amount += int(r, -4, 4) || 2;
+    record(settlement, "SETTLEMENT_TO_BANK", [credit.id], "MATCH", "UTR_IN_NARRATION",
+      "Ref No is empty and the UTR is inside the narration; the amount is a few paise out.");
+  }
+
+  /** The same company, written by five banks that have never agreed on anything. */
+  const disguise = (variant: number) => {
+    const forms = [
+      "NEFT INWARD RZPSPL SETTLEMENT INR",
+      "NEFT CR R P SOFTWARE PVT LTD PAYOUT",
+      "IMPS INWARD RAZOR PAY SW PVT LTD",
+      "NEFT FRM RAZORPY SOFTWRE PVT LTD",
+      "RTGS INWARD RZP-SETTLE-INR-PAYOUT",
+    ];
+    return forms[variant % forms.length];
+  };
+
+  for (const [index, settlement] of take(PLANT_SHARE.DISGUISED_COUNTERPARTY).entries()) {
+    const credit = creditFor(settlement);
+    credit.description = disguise(index);
+    credit.reference = "";
+    credit.amount += int(r, -4, 4) || 3;
+    record(settlement, "SETTLEMENT_TO_BANK", [credit.id], "MATCH", "DISGUISED_COUNTERPARTY",
+      "A real payout whose narration never spells the gateway's name recognisably, with no reference and the amount a few paise out.");
+  }
+
+  /**
+   * The payout described rather than identified — including its transaction count, which is
+   * sometimes a numeral and sometimes a word. A matcher can only weigh this; it cannot
+   * verify it.
+   */
+  const narrate = (settlement: Settlement, variant: number) => {
+    const count = settlement.paymentCount;
+    const words = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine"];
+    const spelled =
+      count < 10
+        ? words[count]
+        : count % 10 === 0 && count < 100
+          ? ["ten", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety"][count / 10 - 1]
+          : String(count);
+    const [year, month, day] = settlement.settledAt.split("-");
+    const months = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
+    const short = `${day}${months[Number(month) - 1]}${year.slice(2)}`;
+    const forms = [
+      `NEFT INWARD RAZORPAY PAYOUT FOR ${count} TXNS DATED ${short}`,
+      `NEFT CR RAZORPAY SETTLEMENT OF ${spelled.toUpperCase()} TRANSACTIONS ${day} ${months[Number(month) - 1]}`,
+      `IMPS RAZORPAY PAYOUT AGAINST ${count} CAPTURES ON ${day}-${month}-${year}`,
+      `NEFT INWARD RAZORPAY BATCH OF ${spelled.toUpperCase()} TXN CLEARED ${short}`,
+    ];
+    return forms[variant % forms.length];
+  };
+
+  for (const [index, settlement] of take(PLANT_SHARE.NARRATED_PAYOUT).entries()) {
+    const credit = creditFor(settlement);
+    credit.description = narrate(settlement, index);
+    credit.reference = "";
+    credit.amount += int(r, -4, 4) || 4;
+    record(settlement, "SETTLEMENT_TO_BANK", [credit.id], "MATCH", "NARRATED_PAYOUT",
+      "No reference at all; the narration names the transaction count and the date in prose, and the amount is a few paise out.");
   }
 
   /* ── The recon report ─────────────────────────────────────────────────*/
