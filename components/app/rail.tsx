@@ -29,7 +29,7 @@ import { cn } from "@/lib/cn";
  * not built yet, and adding a route here before the screen exists is how a dead link ships.
  */
 const SECTIONS = [
-  { icon: Table2, label: "Models", href: "/workspace" },
+  { icon: Table2, label: "Models", href: "/models" },
   { icon: Scale, label: "Reconciliation", href: "/recon" },
   { icon: ChartColumn, label: "Dashboards" },
   { icon: Database, label: "Data sources" },

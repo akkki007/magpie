@@ -6,6 +6,7 @@ import { Grid, type Editing, type GridApi, type Selection } from "@/components/m
 import { flattenRows, isSelectable, type GridRow } from "@/components/modelling/rows";
 import { Toolbar, type ViewOptions } from "@/components/modelling/toolbar";
 import { toast } from "@/components/ui/toast";
+import { persistCommand } from "@/app/(app)/models/actions";
 import { applyCommand, type Command } from "@/lib/model/commands";
 import { evaluate } from "@/lib/model/engine";
 import { dependentsOf } from "@/lib/model/formula";
@@ -58,7 +59,7 @@ function historyReducer(state: HistoryState, action: HistoryAction): HistoryStat
   }
 }
 
-export function Workbench({ initialModel }: { initialModel: Model }) {
+export function Workbench({ initialModel, slug }: { initialModel: Model; slug: string }) {
   const [history, dispatch] = useReducer(historyReducer, {
     model: initialModel,
     undo: [],
@@ -125,7 +126,52 @@ export function Workbench({ initialModel }: { initialModel: Model }) {
     [],
   );
 
-  const run = useCallback((command: Command) => dispatch({ type: "run", command }), []);
+  /**
+   * Apply locally, then persist (M1.1, M1.2).
+   *
+   * The local apply is not a cache of the server's answer — it *is* the answer, computed by
+   * the same `applyCommand` the server runs. That is what keeps typing at keyboard speed
+   * across a round trip, and it is only safe because both sides share one implementation.
+   *
+   * **Writes are serialised**, because commands are not commutative: renaming a variable and
+   * then setting one of its inputs must reach Postgres in that order, and two parallel
+   * `fetch`es have no such guarantee. One chained promise costs nothing at typing speed.
+   *
+   * **A failure does not dispatch `undo`,** which was the first version of this and was
+   * wrong. `undo` pops the most recent edit, so a slow write failing after the user had
+   * already typed into a second cell would silently revert the *wrong* one — and applying the
+   * failed command's own inverse is no better, since a later edit may have overwritten the
+   * same cell. There is no correct surgical rollback here without conflict resolution the
+   * model does not have. So the screen says plainly that it is ahead of the database and
+   * offers the one operation that is certainly correct: read it again.
+   */
+  const pending = useRef<Promise<unknown>>(Promise.resolve());
+
+  const run = useCallback(
+    (command: Command) => {
+      dispatch({ type: "run", command });
+
+      pending.current = pending.current
+        .then(() => persistCommand(slug, command))
+        .then((result) => {
+          if (result.ok) return;
+          toast.error("That edit was not saved", {
+            description: `${result.error} This screen is now ahead of the database.`,
+            duration: Infinity,
+            action: { label: "Reload", onClick: () => window.location.reload() },
+          });
+        })
+        .catch((error: unknown) => {
+          toast.error("That edit was not saved", {
+            description:
+              error instanceof Error ? error.message : "The server could not be reached.",
+            duration: Infinity,
+            action: { label: "Reload", onClick: () => window.location.reload() },
+          });
+        });
+    },
+    [slug],
+  );
 
   /* ── Selection movement ────────────────────────────────────────────────*/
   const move = useCallback(

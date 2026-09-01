@@ -3,6 +3,7 @@ import type { PrismaClient } from "@/lib/generated/prisma/client";
 import { TOTAL } from "./types";
 import type {
   BinaryOp,
+  FormulaFn,
   Dimension,
   FormulaNode,
   InputTable,
@@ -78,7 +79,7 @@ const periodDate = (period: Period) => new Date(Date.UTC(period.year, period.mon
 
 /* ── Writing ──────────────────────────────────────────────────────────────*/
 
-type FlatNode = {
+export type FlatNode = {
   id: string;
   parentId: string | null;
   type: FormulaNode["type"];
@@ -86,11 +87,17 @@ type FlatNode = {
   literal: number | null;
   refVariableId: string | null;
   refMember: string | null;
-  fn: string | null;
+  fn: FormulaFn | null;
   order: number;
 };
 
 /** Depth-first, so a parent row always precedes the children that reference it. */
+export function flattenFormula(node: FormulaNode, variableId: string): FlatNode[] {
+  const out: FlatNode[] = [];
+  flatten(node, variableId, null, 0, out);
+  return out;
+}
+
 function flatten(node: FormulaNode, variableId: string, parentId: string | null, order: number, out: FlatNode[]): void {
   const id = `${variableId}:${parentId ?? "root"}:${order}`;
   out.push({
@@ -199,7 +206,7 @@ export async function writeModel(db: PrismaClient, model: Model, slug: string): 
           literal: node.literal,
           refVariableId: node.refVariableId,
           refMember: node.refMember,
-          fn: node.fn as never,
+          fn: node.fn,
           order: node.order,
         },
       });
