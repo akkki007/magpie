@@ -77,6 +77,12 @@ export const CommandSchema = z.discriminatedUnion("type", [
     name: z.string().min(1).max(120),
   }),
   z.object({
+    type: z.literal("SetFormula"),
+    variableId: z.string().min(1),
+    formula: FormulaNodeSchema.nullable(),
+    kind: z.enum(["INPUT", "FORMULA", "LINKED"]).optional(),
+  }),
+  z.object({
     type: z.literal("InsertVariable"),
     index: z.number().int().min(0),
     variable: VariableSchema,

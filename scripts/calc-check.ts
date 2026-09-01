@@ -12,6 +12,7 @@ import { evaluate } from "../lib/model/engine";
 import { bucketsFor, rollup } from "../lib/model/grain";
 import { div, printFormula, ref } from "../lib/model/formula";
 import { parseFormula } from "../lib/model/parse";
+import { validateFormula } from "../lib/model/validate";
 import { db } from "../lib/db";
 import { readModel } from "../lib/model/persist";
 import { V } from "../prisma/seed-data";
@@ -268,6 +269,107 @@ console.log("\nParser round-trip");
     "the error points at the offending characters",
     !unknown.ok && "Opening ARR + ".length === unknown.error.start,
     unknown.ok ? "parsed" : `${unknown.error.start}–${unknown.error.end}`,
+  );
+}
+
+/**
+ * Validation (M2.3).
+ *
+ * The check that matters is the negative one. A cycle detector that walks the
+ * variable graph rejects `Opening ARR = PRIOR(Closing ARR)`, which is the
+ * central formula of every waterfall in finance — so the static rule here has
+ * to agree with the engine's runtime rule exactly: a loop is only a loop if it
+ * closes within one period. Every formula already in the seeded model passing
+ * is therefore the primary assertion, not a formality.
+ */
+console.log("\nValidation");
+{
+  const context = model;
+  const invalid = (formula: Parameters<typeof validateFormula>[0], target: string) =>
+    validateFormula(formula, context, target);
+
+  const rejected = model.variables.filter((v) => v.formula && invalid(v.formula, v.id));
+  check(
+    "every formula in the seeded model validates",
+    rejected.length === 0,
+    rejected.map((v) => `${v.name}: ${invalid(v.formula!, v.id)?.message}`).join("; "),
+  );
+
+  const parsed = (text: string) => {
+    const result = parseFormula(text, model);
+    if (!result.ok) throw new Error(`fixture does not parse: ${text} — ${result.error.message}`);
+    return result.node;
+  };
+
+  check(
+    "a lagged self-reference is allowed",
+    !invalid(parsed("PRIOR(Opening ARR, 1, 0)"), V.openingArr),
+  );
+  check(
+    "an immediate self-reference is a cycle",
+    !!invalid(parsed("Opening ARR + 1"), V.openingArr),
+  );
+  check(
+    "a two-step immediate loop is a cycle",
+    !!invalid(parsed("Closing ARR"), V.openingArr),
+    invalid(parsed("Closing ARR"), V.openingArr)?.message,
+  );
+  check(
+    "YTD of itself is a cycle — YTD includes this period",
+    !!invalid(parsed("YTD(Opening ARR)"), V.openingArr),
+  );
+  check(
+    "PRIOR with a zero shift is not treated as a lag",
+    !!invalid(parsed("PRIOR(Opening ARR, 0)"), V.openingArr),
+  );
+
+  const loop = invalid(parsed("Closing ARR"), V.openingArr);
+  check(
+    "the message names the loop",
+    !!loop?.message.includes("Opening ARR → Closing ARR → Opening ARR"),
+    loop?.message,
+  );
+
+  check(
+    "too few arguments is rejected",
+    !!invalid({ type: "call", fn: "SPREAD", args: [ref(V.openingArr)] }, V.revenue),
+    invalid({ type: "call", fn: "SPREAD", args: [ref(V.openingArr)] }, V.revenue)?.message,
+  );
+  check(
+    "too many arguments is rejected",
+    !!invalid({ type: "call", fn: "ABS", args: [ref(V.openingArr), ref(V.newArr)] }, V.revenue),
+  );
+  check(
+    "the arity message names the signature",
+    invalid({ type: "call", fn: "ABS", args: [] }, V.revenue)?.message.includes("ABS(value)") === true,
+    invalid({ type: "call", fn: "ABS", args: [] }, V.revenue)?.message,
+  );
+  check(
+    "a variadic function accepts any count above its minimum",
+    !invalid({ type: "call", fn: "MAX", args: [ref(V.openingArr), ref(V.newArr), ref(V.churnArr)] }, V.revenue),
+  );
+  check(
+    "a member aggregator over an undimensioned variable is rejected",
+    !!invalid({ type: "call", fn: "MEMBER_SUM", args: [ref(V.openingArr)] }, V.revenue),
+  );
+  check(
+    "a member aggregator over a dimensioned variable is accepted",
+    !invalid({ type: "call", fn: "MEMBER_SUM", args: [ref(V.newAccounts)] }, V.revenue),
+  );
+  check(
+    "a member aggregator over an expression is rejected",
+    !!invalid(
+      { type: "call", fn: "MEMBER_AVG", args: [{ type: "binary", op: "*", left: ref(V.newAccounts), right: { type: "literal", value: 2 } }] },
+      V.revenue,
+    ),
+  );
+  check(
+    "a reference to a variable outside the model is rejected",
+    !!invalid(ref("v_not_here"), V.revenue),
+  );
+  check(
+    "a member that the dimension does not have is rejected",
+    !!invalid({ type: "ref", variableId: V.acv, member: "platinum" }, V.revenue),
   );
 }
 

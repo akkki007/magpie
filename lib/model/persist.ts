@@ -1,4 +1,6 @@
-import type { PrismaClient } from "@/lib/generated/prisma/client";
+import type { Prisma, PrismaClient } from "@/lib/generated/prisma/client";
+
+import type { ValidationContext } from "./validate";
 
 import { TOTAL } from "./types";
 import type {
@@ -260,6 +262,40 @@ export async function writeModel(db: PrismaClient, model: Model, slug: string): 
 }
 
 /* ── Reading ──────────────────────────────────────────────────────────────*/
+
+/**
+ * Just enough of a model to validate a formula against it (M2.3).
+ *
+ * `readModel` would also do, and would also load 264 input cells and every
+ * scenario overlay to answer a question about names, dimensions and the
+ * dependency graph. A write path runs this on every keystroke that commits a
+ * formula, so it reads the three things the check actually looks at.
+ */
+export async function readValidationContext(
+  tx: Prisma.TransactionClient | PrismaClient,
+  modelId: string,
+): Promise<ValidationContext> {
+  const [variables, dimensions] = await Promise.all([
+    tx.variable.findMany({
+      where: { modelId },
+      select: { id: true, name: true, dimensionId: true, formula: true },
+    }),
+    tx.dimension.findMany({
+      where: { variables: { some: { modelId } } },
+      select: { id: true, name: true, members: { select: { key: true, name: true }, orderBy: { order: "asc" } } },
+    }),
+  ]);
+
+  return {
+    variables: variables.map((v) => ({
+      id: v.id,
+      name: v.name,
+      dimensionId: v.dimensionId ?? undefined,
+      formula: rebuild(v.formula),
+    })),
+    dimensions,
+  };
+}
 
 /** Rebuild one variable's AST from its rows. `order` is what preserves `a - b`. */
 function rebuild(rows: { id: string; parentId: string | null; type: string; op: string | null; literal: unknown; refVariableId: string | null; refMember: string | null; fn: string | null; order: number }[]): FormulaNode | undefined {

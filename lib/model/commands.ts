@@ -1,5 +1,5 @@
 import { TOTAL } from "./types";
-import type { Model, Variable } from "./types";
+import type { FormulaNode, Model, Variable, VariableKind } from "./types";
 
 /**
  * The command bus (`docs/modelling-plan.md` §1.3).
@@ -25,6 +25,19 @@ export type Command =
       value: number;
     }
   | { type: "RenameVariable"; variableId: string; name: string }
+  | {
+      type: "SetFormula";
+      variableId: string;
+      /** `null` turns a computed row back into one you type into. */
+      formula: FormulaNode | null;
+      /**
+       * Carried only by an inverse. Kind is otherwise derived — a formula makes
+       * a row `FORMULA`, removing one makes it `INPUT` — but a `LINKED` row that
+       * gained a formula has to come back as `LINKED`, and deriving cannot know
+       * that. An inverse that is nearly right is worse than no undo.
+       */
+      kind?: VariableKind;
+    }
   | {
       type: "InsertVariable";
       index: number;
@@ -73,6 +86,29 @@ export function applyCommand(model: Model, command: Command): CommandResult {
         // and nothing downstream needs to know (§1.1).
         inverse: { type: "RenameVariable", variableId: command.variableId, name: before },
         label: "Rename variable",
+      };
+    }
+
+    case "SetFormula": {
+      const before = model.variables.find((v) => v.id === command.variableId);
+      const kind: VariableKind = command.kind ?? (command.formula ? "FORMULA" : "INPUT");
+
+      return {
+        model: {
+          ...model,
+          variables: model.variables.map((v) =>
+            v.id === command.variableId
+              ? { ...v, kind, ...(command.formula ? { formula: command.formula } : { formula: undefined }) }
+              : v,
+          ),
+        },
+        inverse: {
+          type: "SetFormula",
+          variableId: command.variableId,
+          formula: before?.formula ?? null,
+          kind: before?.kind,
+        },
+        label: command.formula ? "Edit formula" : "Clear formula",
       };
     }
 

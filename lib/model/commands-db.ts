@@ -1,7 +1,8 @@
 import type { Prisma } from "@/lib/generated/prisma/client";
 
 import type { Command } from "./commands";
-import { flattenFormula, periodsBetween } from "./persist";
+import { flattenFormula, periodsBetween, readValidationContext } from "./persist";
+import { validateFormula } from "./validate";
 
 /**
  * A command, applied to Postgres (`docs/modelling-plan.md` M1.1).
@@ -73,6 +74,41 @@ export async function applyCommandToDb(tx: Tx, modelId: string, command: Command
       return;
     }
 
+    case "SetFormula": {
+      const variable = await tx.variable.findFirst({
+        where: { id: command.variableId, modelId },
+        select: { id: true },
+      });
+      if (!variable) throw new Error(`variable ${command.variableId} is not in this model`);
+
+      // §5: the same gate for a person and for an agent. The editor checks
+      // before it dispatches so the message arrives while the user is still
+      // looking at the text, but a tree posted straight to this action never
+      // went near the editor, and a formula that does not compile must not
+      // reach the database from either direction.
+      if (command.formula) {
+        const context = await readValidationContext(tx, modelId);
+        const invalid = validateFormula(command.formula, context, command.variableId);
+        if (invalid) throw new Error(invalid.message);
+      }
+
+      // Replaced wholesale rather than diffed. A formula tree is small, the
+      // rows carry no identity anything else references, and a diff would be
+      // a second definition of what the tree means.
+      await tx.formulaNode.deleteMany({ where: { variableId: command.variableId } });
+      if (command.formula) {
+        for (const node of flattenFormula(command.formula, command.variableId)) {
+          await tx.formulaNode.create({ data: { ...node, variableId: command.variableId } });
+        }
+      }
+
+      await tx.variable.update({
+        where: { id: command.variableId },
+        data: { kind: command.kind ?? (command.formula ? "FORMULA" : "INPUT") },
+      });
+      return;
+    }
+
     case "InsertVariable": {
       const { variable, index } = command;
 
@@ -102,6 +138,23 @@ export async function applyCommandToDb(tx: Tx, modelId: string, command: Command
       });
 
       if (variable.formula) {
+        // The same gate as SetFormula, with the new row present in the context
+        // so a formula that reads its own new variable is reported as a cycle
+        // rather than as a missing name.
+        const context = await readValidationContext(tx, modelId);
+        const invalid = validateFormula(
+          variable.formula,
+          {
+            ...context,
+            variables: [
+              ...context.variables,
+              { id: variable.id, name: variable.name, dimensionId: variable.dimensionId },
+            ],
+          },
+          variable.id,
+        );
+        if (invalid) throw new Error(invalid.message);
+
         for (const node of flattenFormula(variable.formula, variable.id)) {
           await tx.formulaNode.create({ data: { ...node, variableId: variable.id } });
         }
