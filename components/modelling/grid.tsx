@@ -14,6 +14,7 @@ import {
   TriangleAlert,
 } from "lucide-react";
 
+import { FormulaEditor } from "@/components/modelling/formula-editor";
 import { Menu, MenuItem, MenuSeparator } from "@/components/modelling/menu";
 import type { GridRow } from "@/components/modelling/rows";
 import type { ViewOptions } from "@/components/modelling/toolbar";
@@ -22,7 +23,7 @@ import type { Evaluation } from "@/lib/model/engine";
 import { dependenciesOf, printFormula } from "@/lib/model/formula";
 import { FORMAT_GLYPH, formatValue } from "@/lib/model/format";
 import { rollup, type Bucket } from "@/lib/model/grain";
-import type { ChipTone, Model } from "@/lib/model/types";
+import type { ChipTone, FormulaNode, Model } from "@/lib/model/types";
 import { TOTAL } from "@/lib/model/types";
 
 /**
@@ -57,6 +58,9 @@ export type GridApi = {
   onToggleGroup: (groupId: string) => void;
   onToggleVariable: (variableId: string) => void;
   onTrace: (variableId: string | null) => void;
+  onFormulaStart: (variableId: string) => void;
+  onFormulaCancel: () => void;
+  onFormulaCommit: (variableId: string, formula: FormulaNode | null) => void;
   onRenameStart: (variableId: string) => void;
   onRenameCommit: (variableId: string, name: string) => void;
   onRenameCancel: () => void;
@@ -104,6 +108,7 @@ export function Grid({
   trace,
   renaming,
   adding,
+  formulaEditing,
   api,
   viewport,
 }: {
@@ -117,6 +122,8 @@ export function Grid({
   selection: Selection | null;
   editing: Editing | null;
   trace: string | null;
+  /** The variable whose formula panel is open — at most one at a time. */
+  formulaEditing: string | null;
   renaming: string | null;
   adding: string | null;
   api: GridApi;
@@ -174,6 +181,16 @@ export function Grid({
    * scrollbar length and the sticky offsets are all unchanged. Nothing outside this block
    * knows the grid is windowed.
    */
+  /**
+   * The pill the open formula panel hangs off. A callback ref rather than a
+   * `ref` prop because only the one row being edited assigns it, and the panel
+   * is portalled out of the table — it needs a live rect, not a DOM parent.
+   */
+  const formulaAnchorRef = useRef<HTMLElement | null>(null);
+  const setFormulaAnchor = (element: HTMLElement | null) => {
+    formulaAnchorRef.current = element;
+  };
+
   const [port, setPort] = useState({ top: 0, left: 0, height: 900, width: 1400 });
 
   useEffect(() => {
@@ -362,6 +379,7 @@ export function Grid({
           const editable = variable.kind === "INPUT" && view.grain === "MONTH";
           const traced = tracedIds?.has(variable.id) ?? false;
           const isTraceTarget = trace === variable.id;
+          const isFormulaEditing = formulaEditing === variable.id;
 
           return (
             <tr key={row.key} className="group">
@@ -533,12 +551,16 @@ export function Grid({
                     <span className="flex items-center gap-1">
                       <button
                         type="button"
-                        onClick={() => api.onTrace(isTraceTarget ? null : variable.id)}
-                        title={printFormula(variable.formula, nameOf)}
+                        // Clicking the pill edits it (M2.2). Trace kept its two
+                        // other homes — the hover button on the row and the row
+                        // menu — so nothing was traded away for this.
+                        ref={isFormulaEditing ? setFormulaAnchor : undefined}
+                        onClick={() => api.onFormulaStart(variable.id)}
+                        title={`${printFormula(variable.formula, nameOf)} — click to edit`}
                         className={cn(
                           "formula-pill inline-flex max-w-[196px] items-center gap-1 px-1.5 py-0.5",
                           "transition-colors duration-150 hover:bg-violet-200",
-                          isTraceTarget && "bg-violet-200",
+                          (isTraceTarget || isFormulaEditing) && "bg-violet-200",
                         )}
                       >
                         <span className="shrink-0 text-ink-muted">
@@ -552,10 +574,32 @@ export function Grid({
                         </span>
                       )}
                     </span>
+                  ) : variable.kind === "INPUT" ? (
+                    <button
+                      type="button"
+                      ref={isFormulaEditing ? setFormulaAnchor : undefined}
+                      onClick={() => api.onFormulaStart(variable.id)}
+                      className={cn(
+                        "rounded-button px-1 py-0.5 text-[11px] text-ink-faint",
+                        "transition-colors duration-150 hover:bg-violet-100 hover:text-ink-2",
+                        isFormulaEditing && "bg-violet-100 text-ink-2",
+                      )}
+                      title="Replace these typed values with a formula"
+                    >
+                      Hardcoded
+                    </button>
                   ) : (
-                    <span className="text-[11px] text-ink-faint">
-                      {variable.kind === "INPUT" ? "Hardcoded" : "Linked"}
-                    </span>
+                    <span className="text-[11px] text-ink-faint">Linked</span>
+                  )}
+
+                  {isFormulaEditing && (
+                    <FormulaEditor
+                      model={model}
+                      variable={variable}
+                      anchorRef={formulaAnchorRef}
+                      onSave={(formula) => api.onFormulaCommit(variable.id, formula)}
+                      onClose={api.onFormulaCancel}
+                    />
                   )}
                 </td>
               )}

@@ -90,6 +90,8 @@ export function Workbench({ initialModel, slug }: { initialModel: Model; slug: s
   const [editing, setEditing] = useState<Editing | null>(null);
   const [trace, setTrace] = useState<string | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
+  /** The variable whose formula panel is open (M2.2) — at most one. */
+  const [formulaEditing, setFormulaEditing] = useState<string | null>(null);
   const [adding, setAdding] = useState<string | null>(null);
 
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -487,6 +489,24 @@ export function Workbench({ initialModel, slug }: { initialModel: Model; slug: s
       onToggleVariable: (variableId) =>
         setExpandedVariables((current) => toggled(current, variableId)),
       onTrace: setTrace,
+      onFormulaStart: (variableId) => {
+        setFormulaEditing(variableId);
+        setEditing(null);
+      },
+      onFormulaCancel: () => {
+        setFormulaEditing(null);
+        scrollRef.current?.focus();
+      },
+      onFormulaCommit: (variableId, formula) => {
+        setFormulaEditing(null);
+        scrollRef.current?.focus();
+        const before = model.variables.find((v) => v.id === variableId)?.formula ?? null;
+        // Closing the panel on an untouched formula is not an edit. Without
+        // this every open-and-close would write a row and push an undo step,
+        // and the history would fill with changes nobody made.
+        if (JSON.stringify(before) === JSON.stringify(formula)) return;
+        run({ type: "SetFormula", variableId, formula });
+      },
       onRenameStart: setRenaming,
       onRenameCommit: (variableId, name) => {
         setRenaming(null);
@@ -499,7 +519,7 @@ export function Workbench({ initialModel, slug }: { initialModel: Model; slug: s
       onAddStart: setAdding,
       onAddCommit: addVariable,
     }),
-    [addVariable, commitEdit, duplicate, remove, run, startEdit],
+    [addVariable, commitEdit, duplicate, model.variables, remove, run, startEdit],
   );
 
   const allCollapsed = collapsedGroups.size === model.groups.length;
@@ -543,6 +563,7 @@ export function Workbench({ initialModel, slug }: { initialModel: Model; slug: s
           rows={rows}
           buckets={buckets}
           viewport={scrollRef}
+          formulaEditing={formulaEditing}
           evaluation={evaluation}
           view={view}
           selection={selection}
