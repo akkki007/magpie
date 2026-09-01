@@ -195,38 +195,64 @@ export function ModellingShowcase() {
 
 /* ── Features ────────────────────────────────────────────────────────── */
 
+/**
+ * The feature grid, with a `status` on every card.
+ *
+ * The README's rule — *a README that overstates is worse than no README* — applies here with
+ * more force, because this page is the first thing anyone reads. Four of these six were
+ * written in the present tense about things that do not exist: a visitor who clicks through
+ * expecting connectors finds none, and everything else on the page becomes suspect at the same
+ * moment. A roadmap item labelled as a roadmap item costs nothing; an unlabelled one costs the
+ * credibility of the five that are true.
+ *
+ * `status` is the honest axis: `built` means you can use it today, `partial` means some of it,
+ * `planned` means it is in a plan in `docs/` and not in the product.
+ */
 const FEATURES = [
   {
-    icon: RefreshCcw,
-    title: "Always-on sync from every system",
-    body: "Connect ERP, CRM, billing, HRIS, and the rest, then let Magpie keep every model current with real-time sync and a detailed audit log for every change.",
-  },
-  {
-    icon: Layers,
-    title: "Prebuilt metrics and reusable logic",
-    body: "Start planning in minutes with 100+ prebuilt metrics, reusable components, and model patterns instead of rebuilding the basics from scratch.",
-  },
-  {
     icon: Boxes,
+    status: "built",
     title: "Multi-dimensional, no-code modelling",
-    body: "Model by product, region, channel, or any custom dimension using a drag-and-drop, formula-light interface that still handles complex structures.",
+    body: "Model by product, region, channel, or any custom dimension. Dimensions belong to the variable, so a parent row is always a rollup of its members and can never disagree with them.",
   },
   {
     icon: GitCompare,
+    status: "built",
     title: "See every what-if in one place",
-    body: "Create and compare scenarios, switch between daily, monthly, and yearly views, and apply AI forecasting to explore best, base, and worst cases side by side.",
+    body: "Scenario overlays that leave the base case untouched, and a grain switch from months to quarters to years that knows a balance takes the closing month while a flow sums. Side-by-side comparison and AI forecasting are next.",
   },
   {
     icon: Bot,
+    status: "partial",
     title: "Let agents build with you",
-    body: "Ask agents to generate models, link data sources, update drivers, and surface insights so your team spends its time on decisions, not setup.",
+    body: "In reconciliation this is live: an agent adjudicates only what deterministic rules could not resolve, behind a gate that recomputes every number it returns. Agents that build models are designed and not yet built.",
+  },
+  {
+    icon: RefreshCcw,
+    status: "partial",
+    title: "Bring your data in",
+    body: "CSV ingestion across seven sources today, with every unparseable row recorded as a typed rejection rather than dropped. Live ERP, CRM, billing and HRIS connectors are on the roadmap.",
   },
   {
     icon: Users,
+    status: "partial",
     title: "Plan together, stay in control",
-    body: "Comments, notifications, approvals, and version history — including rollback — so collaboration never costs you the audit trail.",
+    body: "Every change — human or agent — is a typed command carrying its own inverse, so undo and the audit trail are one mechanism. Comments, approvals and shared presence are on the roadmap.",
   },
-];
+  {
+    icon: Layers,
+    status: "planned",
+    title: "Prebuilt metrics and reusable logic",
+    body: "One template exists today: a full ARR waterfall. The library of 100+ metrics and reusable components is the plan, not the product.",
+  },
+] as const satisfies readonly { icon: unknown; status: "built" | "partial" | "planned"; title: string; body: string }[];
+
+const STATUS_LABEL = {
+  built: "Built",
+  partial: "Partly built",
+  planned: "Roadmap",
+} as const;
+
 
 export function Features() {
   return (
@@ -245,9 +271,20 @@ export function Features() {
               <div className="grid h-9 w-9 place-items-center rounded-control border border-line bg-app">
                 <f.icon className="h-4 w-4 text-ink" strokeWidth={1.75} />
               </div>
-              <h3 className="mt-4 text-[16px] font-semibold tracking-[-0.015em] text-ink">
-                {f.title}
-              </h3>
+              <div className="mt-4 flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                <h3 className="text-[16px] font-semibold tracking-[-0.015em] text-ink">
+                  {f.title}
+                </h3>
+                <span
+                  className={
+                    f.status === "built"
+                      ? "shrink-0 rounded-chip border border-line-strong px-1.5 py-px text-[10px] font-medium uppercase tracking-[0.04em] text-ink-2"
+                      : "shrink-0 rounded-chip border border-line px-1.5 py-px text-[10px] font-medium uppercase tracking-[0.04em] text-ink-faint"
+                  }
+                >
+                  {STATUS_LABEL[f.status]}
+                </span>
+              </div>
               <p className="mt-2 text-[14px] leading-[1.6] text-ink-muted">{f.body}</p>
             </Reveal>
           ))}
@@ -267,7 +304,7 @@ export function Agents() {
           <SectionHead
             eyebrow="Agents"
             title="AI proposes. You decide."
-            body="Agents never write to your model directly. Every change arrives as a reviewable set — see the diff, compare it against the base case, then accept or undo the whole thing in one action."
+            body="Agents never write directly. Every change arrives as a reviewable proposal, and every number one returns is recomputed before you see it. That is live in reconciliation today — where the agent closes cases the rules cannot, without adding a single wrong match — and it is the same mechanism the modelling agent will use."
           />
           <ul className="mt-8 space-y-4">
             {[
