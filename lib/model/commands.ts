@@ -49,6 +49,29 @@ export type Command =
 
 export type CommandResult = { model: Model; inverse: Command; label: string };
 
+/**
+ * What this command is called in the undo button and the history panel.
+ *
+ * Derived from the command rather than passed alongside it, because the server
+ * records the label into the log and never runs `applyCommand` — two places
+ * writing their own wording is how the history panel ends up disagreeing with
+ * the tooltip on the undo button.
+ */
+export function labelFor(command: Command): string {
+  switch (command.type) {
+    case "SetInput":
+      return "Edit value";
+    case "RenameVariable":
+      return "Rename variable";
+    case "SetFormula":
+      return command.formula ? "Edit formula" : "Clear formula";
+    case "InsertVariable":
+      return "Add variable";
+    case "RemoveVariable":
+      return "Delete variable";
+  }
+}
+
 export function applyCommand(model: Model, command: Command): CommandResult {
   switch (command.type) {
     case "SetInput": {
@@ -69,7 +92,7 @@ export function applyCommand(model: Model, command: Command): CommandResult {
           inputs: { ...model.inputs, [variableId]: { ...table, [member]: next } },
         },
         inverse: { ...command, value: before },
-        label: "Edit value",
+        label: labelFor(command),
       };
     }
 
@@ -85,7 +108,7 @@ export function applyCommand(model: Model, command: Command): CommandResult {
         // Formulas hold ids, not names, so a rename touches exactly one field
         // and nothing downstream needs to know (§1.1).
         inverse: { type: "RenameVariable", variableId: command.variableId, name: before },
-        label: "Rename variable",
+        label: labelFor(command),
       };
     }
 
@@ -108,7 +131,7 @@ export function applyCommand(model: Model, command: Command): CommandResult {
           formula: before?.formula ?? null,
           kind: before?.kind,
         },
-        label: command.formula ? "Edit formula" : "Clear formula",
+        label: labelFor(command),
       };
     }
 
@@ -126,14 +149,14 @@ export function applyCommand(model: Model, command: Command): CommandResult {
             : model.inputs,
         },
         inverse: { type: "RemoveVariable", variableId: command.variable.id },
-        label: "Add variable",
+        label: labelFor(command),
       };
     }
 
     case "RemoveVariable": {
       const index = model.variables.findIndex((v) => v.id === command.variableId);
       if (index === -1) {
-        return { model, inverse: command, label: "Delete variable" };
+        return { model, inverse: command, label: labelFor(command) };
       }
 
       const variable = model.variables[index];
@@ -148,7 +171,7 @@ export function applyCommand(model: Model, command: Command): CommandResult {
           inputs: nextInputs,
         },
         inverse: { type: "InsertVariable", index, variable, inputs },
-        label: "Delete variable",
+        label: labelFor(command),
       };
     }
   }

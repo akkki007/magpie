@@ -15,6 +15,7 @@
     "mail:check": "bun run scripts/mail-check.ts",
     "seed": "bun run scripts/seed-model.ts",
     "calc:check": "bun run scripts/calc-check.ts",
+    "history:check": "bun run scripts/history-check.ts",
     "recon:seed": "bun run scripts/recon-seed.ts",
     "recon:ingest": "bun run scripts/recon-ingest.ts",
     "recon:match": "bun run scripts/recon-match.ts",

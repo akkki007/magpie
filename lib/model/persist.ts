@@ -298,6 +298,8 @@ export async function readValidationContext(
 }
 
 /** Rebuild one variable's AST from its rows. `order` is what preserves `a - b`. */
+export { rebuild as rebuildFormula };
+
 function rebuild(rows: { id: string; parentId: string | null; type: string; op: string | null; literal: unknown; refVariableId: string | null; refMember: string | null; fn: string | null; order: number }[]): FormulaNode | undefined {
   const byParent = new Map<string | null, typeof rows>();
   for (const row of rows) {

@@ -12,7 +12,7 @@ import {
 import { flattenRows, isSelectable, type GridRow } from "@/components/modelling/rows";
 import { Toolbar, type ViewOptions } from "@/components/modelling/toolbar";
 import { toast } from "@/components/ui/toast";
-import { persistCommand } from "@/app/(app)/models/actions";
+import { persistCommand, redoModel, undoModel } from "@/app/(app)/models/actions";
 import { applyCommand, type Command } from "@/lib/model/commands";
 import { evaluate } from "@/lib/model/engine";
 import { dependentsOf } from "@/lib/model/formula";
@@ -32,14 +32,25 @@ import { TOTAL, type Model, type Variable } from "@/lib/model/types";
  * when the agent arrives.
  */
 
+/**
+ * One step on the local undo stack.
+ *
+ * `changeSetId` is the id of the *server* changeset this step corresponds to,
+ * generated here so it is known the instant the command is dispatched rather
+ * than one round trip later (M3.2). Undo sends it along and the server refuses
+ * if that is not what is actually on top of the log — the two stacks are then
+ * checked against each other instead of assumed to agree.
+ */
+type Step = { command: Command; changeSetId: string };
+
 type HistoryState = {
   model: Model;
-  undo: Command[];
-  redo: Command[];
+  undo: Step[];
+  redo: Step[];
 };
 
 type HistoryAction =
-  | { type: "run"; command: Command }
+  | { type: "run"; command: Command; changeSetId: string }
   | { type: "undo" }
   | { type: "redo" };
 
@@ -47,20 +58,27 @@ function historyReducer(state: HistoryState, action: HistoryAction): HistoryStat
   switch (action.type) {
     case "run": {
       const { model, inverse } = applyCommand(state.model, action.command);
-      // A new edit invalidates the redo branch — the usual linear history.
-      return { model, undo: [inverse, ...state.undo].slice(0, 100), redo: [] };
+      // A new edit invalidates the redo branch — the usual linear history, and
+      // the same rule `historyStacks` applies when it replays the log.
+      return {
+        model,
+        undo: [{ command: inverse, changeSetId: action.changeSetId }, ...state.undo].slice(0, 100),
+        redo: [],
+      };
     }
     case "undo": {
-      const [command, ...rest] = state.undo;
-      if (!command) return state;
-      const { model, inverse } = applyCommand(state.model, command);
-      return { model, undo: rest, redo: [inverse, ...state.redo] };
+      const [step, ...rest] = state.undo;
+      if (!step) return state;
+      const { model, inverse } = applyCommand(state.model, step.command);
+      // The id travels with the step: it names the EDIT changeset, which is
+      // what a later redo has to point back at.
+      return { model, undo: rest, redo: [{ ...step, command: inverse }, ...state.redo] };
     }
     case "redo": {
-      const [command, ...rest] = state.redo;
-      if (!command) return state;
-      const { model, inverse } = applyCommand(state.model, command);
-      return { model, undo: [inverse, ...state.undo], redo: rest };
+      const [step, ...rest] = state.redo;
+      if (!step) return state;
+      const { model, inverse } = applyCommand(state.model, step.command);
+      return { model, undo: [{ ...step, command: inverse }, ...state.undo], redo: rest };
     }
   }
 }
@@ -155,31 +173,65 @@ export function Workbench({ initialModel, slug }: { initialModel: Model; slug: s
    */
   const pending = useRef<Promise<unknown>>(Promise.resolve());
 
-  const run = useCallback(
-    (command: Command) => {
-      dispatch({ type: "run", command });
+  /** Every write path reports failure the same way: the screen is ahead, read it again. */
+  const behind = useCallback((title: string, detail: string) => {
+    toast.error(title, {
+      description: `${detail} This screen is now ahead of the database.`,
+      duration: Infinity,
+      action: { label: "Reload", onClick: () => window.location.reload() },
+    });
+  }, []);
 
+  const send = useCallback(
+    (title: string, write: () => Promise<{ ok: true } | { ok: false; error: string }>) => {
       pending.current = pending.current
-        .then(() => persistCommand(slug, command))
+        .then(write)
         .then((result) => {
-          if (result.ok) return;
-          toast.error("That edit was not saved", {
-            description: `${result.error} This screen is now ahead of the database.`,
-            duration: Infinity,
-            action: { label: "Reload", onClick: () => window.location.reload() },
-          });
+          if (!result.ok) behind(title, result.error);
         })
         .catch((error: unknown) => {
-          toast.error("That edit was not saved", {
-            description:
-              error instanceof Error ? error.message : "The server could not be reached.",
-            duration: Infinity,
-            action: { label: "Reload", onClick: () => window.location.reload() },
-          });
+          behind(title, error instanceof Error ? error.message : "The server could not be reached.");
         });
     },
-    [slug],
+    [behind],
   );
+
+  const run = useCallback(
+    (command: Command) => {
+      // Generated here, not on the server, so the undo stack can name this
+      // changeset immediately (M3.2) — and so a retried request cannot apply
+      // the same edit twice, because the id is the primary key.
+      const changeSetId = crypto.randomUUID();
+      dispatch({ type: "run", command, changeSetId });
+      send("That edit was not saved", () => persistCommand(slug, changeSetId, command));
+    },
+    [send, slug],
+  );
+
+  /**
+   * Undo and redo are writes now (M3.2).
+   *
+   * They were local-only, which meant an edit, an undo and a reload brought the
+   * edit back — the screen and the database quietly disagreeing, with nothing
+   * on screen to say so. They go through the same serialised chain as an edit,
+   * for the same reason: an undo racing the edit it undoes would reach Postgres
+   * in the wrong order.
+   */
+  const undo = useCallback(() => {
+    const step = history.undo[0];
+    if (!step) return;
+    dispatch({ type: "undo" });
+    const changeSetId = crypto.randomUUID();
+    send("That undo was not saved", () => undoModel(slug, step.changeSetId, changeSetId));
+  }, [history.undo, send, slug]);
+
+  const redo = useCallback(() => {
+    const step = history.redo[0];
+    if (!step) return;
+    dispatch({ type: "redo" });
+    const changeSetId = crypto.randomUUID();
+    send("That redo was not saved", () => redoModel(slug, step.changeSetId, changeSetId));
+  }, [history.redo, send, slug]);
 
   /* ── Selection movement ────────────────────────────────────────────────*/
   const move = useCallback(
@@ -464,11 +516,12 @@ export function Workbench({ initialModel, slug }: { initialModel: Model; slug: s
       const target = event.target as HTMLElement | null;
       if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA")) return;
       event.preventDefault();
-      dispatch({ type: event.shiftKey ? "redo" : "undo" });
+      if (event.shiftKey) redo();
+      else undo();
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, []);
+  }, [redo, undo]);
 
   /* ── Grid callbacks ────────────────────────────────────────────────────*/
   const api: GridApi = useMemo(
@@ -547,8 +600,8 @@ export function Workbench({ initialModel, slug }: { initialModel: Model; slug: s
         }
         canUndo={history.undo.length > 0}
         canRedo={history.redo.length > 0}
-        onUndo={() => dispatch({ type: "undo" })}
-        onRedo={() => dispatch({ type: "redo" })}
+        onUndo={undo}
+        onRedo={redo}
       />
 
       <div

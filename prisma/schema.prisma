@@ -209,6 +209,35 @@ enum FormulaFn {
   MEMBER_COUNT
 }
 
+/// Who caused a change. §5's agent and §6's sync both write to the audit log,
+/// and this is a fact about the event that cannot be reconstructed afterwards —
+/// unlike a lifecycle field, which needs code to maintain it, so `status` waits
+/// for M5's proposal flow rather than sitting here unmaintained.
+enum ChangeOrigin {
+  USER
+  AGENT
+  SYNC
+}
+
+/// What a changeset *is*, which is what makes the undo stack reconstructible
+/// from the log. See `lib/model/changesets.ts`.
+enum ChangeKind {
+  EDIT
+  UNDO
+  REDO
+  ROLLBACK
+}
+
+/// Adding a command type is a migration on purpose: §1.3's list is meant to be
+/// short, and a new mutation is a decision, not an implementation detail.
+enum CommandType {
+  SetInput
+  RenameVariable
+  SetFormula
+  InsertVariable
+  RemoveVariable
+}
+
 model Model {
   id             String          @id @default(uuid())
   organisationId String?
@@ -224,6 +253,8 @@ model Model {
   groups         VariableGroup[]
   variables      Variable[]
   scenarios      Scenario[]
+  changeSets     ChangeSet[]
+  versions       ModelVersion[]
 
   @@unique([slug])
   @@index([organisationId])
@@ -400,4 +431,88 @@ model ScenarioOverride {
   @@unique([scenarioId, variableId])
   @@index([scenarioId])
   @@map("scenario_override")
+}
+
+
+/// One atomic change to a model (§1.3, M3.1).
+///
+/// A user's keystroke is a changeset of one command; an agent's proposal (§1.4)
+/// will be a changeset of many, accepted or rejected together. Undo and redo are
+/// themselves changesets — the log is append-only, because it *is* the audit
+/// trail, and a trail you can delete from answers no question worth asking.
+model ChangeSet {
+  id      String       @id
+  modelId String
+  /// Monotonic per model. Timestamps collide at typing speed; this is what
+  /// "ordered" in §1.3 actually means, and the unique index is what stops two
+  /// tabs from interleaving into the same position.
+  seq     Int
+  kind    ChangeKind
+  origin  ChangeOrigin @default(USER)
+  /// What the history panel shows: "Edit value", "Add variable".
+  label   String
+  /// The EDIT (or ROLLBACK) this UNDO or REDO acts on. It is what makes the
+  /// stack reconstructible; the undo still stores the commands it actually
+  /// applied, so every entry says what it did rather than what it points at.
+  targetId String?
+
+  /// Denormalised on purpose: a user row can be deleted and history must not
+  /// start lying about who did what. The id is the join; the name is the record.
+  actorId   String?
+  actorName String
+  createdAt DateTime @default(now())
+
+  model    Model     @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  target   ChangeSet? @relation("ChangeSetTarget", fields: [targetId], references: [id])
+  reverts  ChangeSet[] @relation("ChangeSetTarget")
+  commands Command[]
+
+  @@unique([modelId, seq])
+  @@index([modelId, createdAt])
+  @@map("change_set")
+}
+
+/// One command and the command that undoes it (§1.3).
+///
+/// The payloads are `jsonb`, which is not a contradiction of §1.1's "no string
+/// column for formulas". §1.1 is about the *live* model, where a rename must not
+/// break sixty formulas. This is an immutable record of something that already
+/// happened: it must not follow a later rename, it must say what was done.
+model Command {
+  id          String      @id @default(uuid())
+  changeSetId String
+  /// Position within the changeset — commands do not commute.
+  order       Int
+  type        CommandType
+  payload     Json
+  inverse     Json
+
+  changeSet ChangeSet @relation(fields: [changeSetId], references: [id], onDelete: Cascade)
+
+  @@index([changeSetId])
+  @@map("command")
+}
+
+/// A named point to come back to (§1.3, M3.3).
+///
+/// `snapshot` holds the whole model as the engine sees it. Rollback does *not*
+/// write it back — it replays inverses, so the log stays continuous and every
+/// step is attributable. The snapshot is what the replay is checked against: if
+/// the two disagree, some command was not honestly invertible and the rollback
+/// refuses rather than silently landing somewhere nobody named.
+model ModelVersion {
+  id        String   @id @default(uuid())
+  modelId   String
+  /// The changeset seq this version was cut at — "the commands since it".
+  seq       Int
+  label     String
+  snapshot  Json
+  actorId   String?
+  actorName String
+  createdAt DateTime @default(now())
+
+  model Model @relation(fields: [modelId], references: [id], onDelete: Cascade)
+
+  @@index([modelId, seq])
+  @@map("model_version")
 }
