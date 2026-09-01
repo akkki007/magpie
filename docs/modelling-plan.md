@@ -346,6 +346,31 @@ M3 where there is something to write to them.
 
 *The grid itself is built. This phase is what the DB makes newly possible.*
 
+*M1.1, M1.2 and M1.4 are built; M1.3 is not.* An edited cell survives a reload. The grid
+applies the command locally and a server action persists it, so typing stays at keyboard speed
+across the round trip — and the local apply is not a cache of the server's answer, it is the
+same `applyCommand` the server runs.
+
+**The authorisation check is in the action, not only in the page.** A server function is an
+HTTP endpoint that happens to be written as a function, so a check upstream protects the page
+and nothing else. Every command additionally verifies the variable belongs to the model in the
+URL: a well-formed command naming someone else's variable is legal by schema and wrong by
+authorisation, and validation cannot tell them apart.
+
+**Writes are serialised**, because commands do not commute — renaming a variable and then
+setting one of its inputs must reach Postgres in that order.
+
+**A failure does not dispatch `undo`,** which was the first version and was wrong. `undo` pops
+the most recent edit, so a slow write failing after the user had typed into a second cell would
+revert the wrong one; applying the failed command's own inverse is no better, since a later
+edit may have overwritten the same cell. There is no correct surgical rollback without conflict
+resolution the model does not have, so the screen says it is ahead of the database and offers
+the operation that is certainly correct: read it again.
+
+**M1.3 is the outstanding one**, and the plan's own warning is now the situation: *do it before
+the grid is worth virtualising; retrofitting it into a working grid is a rewrite.* At 22 rows
+and 24 columns nothing is slow yet, which is exactly the window in which it is cheap.
+
 **M1.1 — Server actions for edits** — an edited cell writes through a command (§1.3) in a
 server action, not client state. *Done when:* a reload keeps the edit.
 **M1.2 — Optimistic updates** — the grid applies locally and reconciles, so typing stays
