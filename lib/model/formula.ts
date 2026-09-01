@@ -1,3 +1,4 @@
+import { OPERATORS } from "./primitives";
 import type { BinaryOp, FormulaFn, FormulaNode, Variable } from "./types";
 
 /**
@@ -36,6 +37,12 @@ export const sub = bin("-");
 export const mul = bin("*");
 export const div = bin("/");
 export const pow = bin("^");
+export const eq = bin("=");
+export const ne = bin("<>");
+export const lt = bin("<");
+export const lte = bin("<=");
+export const gt = bin(">");
+export const gte = bin(">=");
 
 export const call = (fn: FormulaFn, ...args: FormulaNode[]): FormulaNode => ({
   type: "call",
@@ -47,27 +54,15 @@ export const call = (fn: FormulaFn, ...args: FormulaNode[]): FormulaNode => ({
 export const prior = (x: FormulaNode, n = 1, fallback?: FormulaNode) =>
   call("PRIOR", x, lit(n), ...(fallback ? [fallback] : []));
 
+export const iff = (condition: FormulaNode, then: FormulaNode, otherwise: FormulaNode) =>
+  call("IF", condition, then, otherwise);
+
 /* ── Printing ─────────────────────────────────────────────────────────────
    Precedence-aware so the printed string means the same thing as the tree.
    A printer that drops a necessary bracket turns a correct model into a
    plausible-looking wrong one, which is worse than a crash. */
 
-const PRECEDENCE: Record<BinaryOp, number> = {
-  "+": 1,
-  "-": 1,
-  "*": 2,
-  "/": 2,
-  "^": 3,
-};
-
-/** `–` (en dash) reads better than a hyphen at 12px in a dense grid. */
-const GLYPH: Record<BinaryOp, string> = {
-  "+": "+",
-  "-": "–",
-  "*": "×",
-  "/": "÷",
-  "^": "^",
-};
+export const MEMBER_SEPARATOR = " \u00b7 ";
 
 export function printFormula(
   node: FormulaNode,
@@ -76,6 +71,12 @@ export function printFormula(
   return print(node, 0, nameOf);
 }
 
+/**
+ * `parentPrecedence` is the level at or below which this node must bracket
+ * itself. Associativity is expressed by what the *caller* passes down rather
+ * than by a rule here, which keeps the one subtle case in one place: see the
+ * binary arm.
+ */
 function print(
   node: FormulaNode,
   parentPrecedence: number,
@@ -86,18 +87,25 @@ function print(
       return formatLiteral(node.value);
 
     case "ref":
-      return node.member ? `${nameOf(node.variableId)} · ${node.member}` : nameOf(node.variableId);
+      return node.member
+        ? `${nameOf(node.variableId)}${MEMBER_SEPARATOR}${node.member}`
+        : nameOf(node.variableId);
 
     case "call":
       return `${node.fn}(${node.args.map((a) => print(a, 0, nameOf)).join(", ")})`;
 
     case "binary": {
-      const precedence = PRECEDENCE[node.op];
-      const body = `${print(node.left, precedence, nameOf)} ${GLYPH[node.op]} ${print(
+      const { precedence, glyph, associativity } = OPERATORS[node.op];
+      // An equal-precedence operand needs a bracket on whichever side the
+      // operator does *not* associate towards: `a – (b – c)` on the right of a
+      // left-associative `–`, `(a ^ b) ^ c` on the left of a right-associative
+      // `^`. A non-associative comparison brackets on both. Get this backwards
+      // and a correct tree prints as a string meaning something else.
+      const bump = (side: "left" | "right") =>
+        associativity === side ? precedence : precedence + 1;
+      const body = `${print(node.left, bump("left"), nameOf)} ${glyph} ${print(
         node.right,
-        // The right operand of a non-associative op needs a bracket at equal
-        // precedence: `a – (b – c)` is not `a – b – c`.
-        node.op === "-" || node.op === "/" ? precedence + 1 : precedence,
+        bump("right"),
         nameOf,
       )}`;
       return precedence < parentPrecedence ? `(${body})` : body;
@@ -105,9 +113,21 @@ function print(
   }
 }
 
+/**
+ * Rates are authored as decimals and read as percentages by finance people, so
+ * `0.075` prints as `7.5%`.
+ *
+ * The round-trip guard is not decoration. M2.2 lets a user edit this string and
+ * saves what comes back, so a lossy rendering silently rewrites the model:
+ * a churn rate of `0.010145423274166877` printed as `1.01%` and re-parsed is a
+ * different number, and nobody edited it. Percent notation is used only where
+ * it is exactly reversible; everything else prints as the decimal it is.
+ */
 function formatLiteral(value: number) {
-  // Rates are authored as decimals but read as percentages by finance people.
-  if (value !== 0 && Math.abs(value) < 1) return `${(value * 100).toFixed(2).replace(/\.?0+$/, "")}%`;
+  if (value !== 0 && Math.abs(value) < 1) {
+    const percent = Number((value * 100).toPrecision(12));
+    if (percent / 100 === value) return `${percent}%`;
+  }
   return String(value);
 }
 

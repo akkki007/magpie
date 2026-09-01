@@ -171,22 +171,42 @@ enum FormulaNodeType {
   call
 }
 
+/// Spelled out rather than stored as the symbol, so the column is readable in
+/// `prisma studio` and a symbol change in the UI is not a data migration.
 enum BinaryOp {
   ADD
   SUBTRACT
   MULTIPLY
   DIVIDE
   POWER
+  EQ
+  NEQ
+  LT
+  LTE
+  GT
+  GTE
 }
 
+/// The primitive set (§3). `lib/model/primitives.ts` holds arity and help text
+/// for each of these and fails to compile if the two lists drift apart.
 enum FormulaFn {
   PRIOR
   NEXT
   YTD
   CUMULATIVE
+  OPENING
+  CLOSING
+  GROWTH
+  SPREAD
+  IF
   MIN
   MAX
   ABS
+  MEMBER_SUM
+  MEMBER_AVG
+  MEMBER_MIN
+  MEMBER_MAX
+  MEMBER_COUNT
 }
 
 model Model {

@@ -6,12 +6,15 @@
  * just three times too big. These assertions are the cheap version of the
  * golden-file suite M2 wants, and they run in under a second.
  */
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+
 import { evaluate } from "../lib/model/engine";
 import { bucketsFor, rollup } from "../lib/model/grain";
 import { div, ref } from "../lib/model/formula";
 import { db } from "../lib/db";
 import { readModel } from "../lib/model/persist";
 import { V } from "../prisma/seed-data";
+import { PRIMITIVE_MODEL, PRIMITIVE_ROWS } from "./primitive-fixture";
 import { TOTAL } from "../lib/model/types";
 import type { Model } from "../lib/model/types";
 
@@ -167,6 +170,62 @@ console.log("\nCycles");
   check("circular reference is detected", Object.keys(result.errors).length > 0,
     JSON.stringify(result.errors));
   check("the honest lag in Opening ARR is NOT flagged", !result.errors[V.openingArr]);
+}
+
+/**
+ * The golden file (M2.4).
+ *
+ * Every primitive evaluated over `scripts/primitive-fixture.ts` and compared to
+ * a committed series, cell by cell. The assertions above test the primitives
+ * the demo model happens to use; this one is the reason a change to `SPREAD`
+ * cannot pass unnoticed just because nothing in the ARR waterfall calls it.
+ *
+ * `--write-golden` regenerates the file, and nothing else does. A check that
+ * silently rewrites its own expectations when they stop matching has recorded
+ * the bug as the new truth — the failure mode this repo has already hit four
+ * times in its eval harnesses. A missing file is a hard failure, not a prompt
+ * to create one.
+ */
+const GOLDEN_PATH = "scripts/golden/primitives.json";
+
+console.log("\nPrimitives (golden file)");
+{
+  const evaluation = evaluate(PRIMITIVE_MODEL, "s_base");
+  const round = (n: number) => Number(n.toFixed(9));
+  const actual = Object.fromEntries(
+    PRIMITIVE_ROWS.map((id) => [id, evaluation.series(id).map(round)]),
+  );
+
+  if (process.argv.includes("--write-golden")) {
+    mkdirSync("scripts/golden", { recursive: true });
+    writeFileSync(GOLDEN_PATH, `${JSON.stringify(actual, null, 2)}\n`);
+    console.log(`  wrote ${GOLDEN_PATH} — read it before committing it`);
+  } else if (!existsSync(GOLDEN_PATH)) {
+    check(GOLDEN_PATH, false, "missing — regenerate with `bun run calc:check --write-golden`");
+  } else {
+    const golden: Record<string, number[]> = JSON.parse(readFileSync(GOLDEN_PATH, "utf8"));
+    const missing = PRIMITIVE_ROWS.filter((id) => !golden[id]);
+    check("every primitive is covered", missing.length === 0, missing.join(", "));
+
+    for (const id of PRIMITIVE_ROWS) {
+      const expected = golden[id];
+      if (!expected) continue;
+      const got = actual[id];
+      const at = expected.findIndex((v, t) => !near(v, got[t], 1e-9));
+      check(
+        `${id} matches golden`,
+        at === -1 && expected.length === got.length,
+        at === -1 ? `length ${got.length} vs ${expected.length}` : `period ${at}: ${got[at]} ≠ ${expected[at]}`,
+      );
+    }
+
+    // The golden file must not outlive the fixture it describes: a row deleted
+    // from the fixture would otherwise keep passing as an untested absence.
+    const orphans = Object.keys(golden).filter((id) => !PRIMITIVE_ROWS.includes(id));
+    check("no golden rows without a fixture row", orphans.length === 0, orphans.join(", "));
+  }
+  check("no errors in the primitive fixture", Object.keys(evaluation.errors).length === 0,
+    JSON.stringify(evaluation.errors));
 }
 
 console.log(

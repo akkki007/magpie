@@ -33,21 +33,54 @@ export type Aggregation = "SUM" | "FIRST" | "LAST" | "AVG" | "NONE";
 /** Organisational only — the pastel highlighter chips, never semantic. */
 export type ChipTone = "amber" | "rose" | "graphite" | "sky" | "blue";
 
-export type BinaryOp = "+" | "-" | "*" | "/" | "^";
+/**
+ * Arithmetic and comparison. Comparison yields 1 or 0 so it composes with the
+ * rest of the language rather than introducing a boolean type the grid would
+ * then have to format — a cell is always a number (§3).
+ */
+export type BinaryOp =
+  | "+"
+  | "-"
+  | "*"
+  | "/"
+  | "^"
+  | "="
+  | "<>"
+  | "<"
+  | "<="
+  | ">"
+  | ">=";
 
 /**
  * The function set, deliberately tiny (§3: "roughly 25 primitives — resist
  * adding more; every one added is one the AI can get wrong and a user must
  * learn"). Time functions are the reason the evaluator is period-aware.
+ *
+ * Arity, parameter names and help text live in `primitives.ts`, which the
+ * tokeniser, the validator and the editor's autocomplete all read; this union
+ * is only the set of legal names.
  */
 export type FormulaFn =
+  // Time
   | "PRIOR"
   | "NEXT"
   | "YTD"
   | "CUMULATIVE"
+  | "OPENING"
+  | "CLOSING"
+  | "GROWTH"
+  | "SPREAD"
+  // Logic and arithmetic
+  | "IF"
   | "MIN"
   | "MAX"
-  | "ABS";
+  | "ABS"
+  // Across the members of a dimension (§1.6)
+  | "MEMBER_SUM"
+  | "MEMBER_AVG"
+  | "MEMBER_MIN"
+  | "MEMBER_MAX"
+  | "MEMBER_COUNT";
 
 export type FormulaNode =
   | { type: "literal"; value: number }

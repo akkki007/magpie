@@ -33,6 +33,18 @@ import type { FormulaNode } from "./types";
 
 export type Series = number[];
 
+/**
+ * Half of the last digit `numeric(20,6)` can store (§2). Two values the
+ * database cannot tell apart compare as equal, which keeps the six comparison
+ * operators mutually consistent: exactly one of `<`, `=`, `>` holds for any
+ * pair. Exact `===` on doubles would let a cell be neither equal to nor
+ * greater than nor less than another, and an `IF` built on that is unfixable
+ * from the user's side.
+ */
+const EPSILON = 5e-7;
+
+const compare = (l: number, r: number) => (Math.abs(l - r) < EPSILON ? 0 : l < r ? -1 : 1);
+
 export type Evaluation = {
   /** Series for a variable, optionally sliced to a dimension member. */
   series: (variableId: string, member?: string) => Series;
@@ -150,12 +162,53 @@ export function evaluate(model: Model, scenarioId?: string): Evaluation {
             return r === 0 ? 0 : l / r;
           case "^":
             return l ** r;
+          // Comparison yields 1 or 0, so a condition is just a number and the
+          // grid never has to render a boolean.
+          case "=":
+            return compare(l, r) === 0 ? 1 : 0;
+          case "<>":
+            return compare(l, r) === 0 ? 0 : 1;
+          case "<":
+            return compare(l, r) < 0 ? 1 : 0;
+          case "<=":
+            return compare(l, r) <= 0 ? 1 : 0;
+          case ">":
+            return compare(l, r) > 0 ? 1 : 0;
+          case ">=":
+            return compare(l, r) >= 0 ? 1 : 0;
         }
       }
 
       case "call":
         return evalCall(node, member, t);
     }
+  }
+
+  /**
+   * Every member series of the variable a `MEMBER_*` argument points at.
+   *
+   * The argument must be a bare reference — `MEMBER_AVG(ACV × 2)` has no
+   * meaning, because "the members" is a property of a stored variable, not of
+   * an expression. `validateFormula` rejects anything else before it can be
+   * saved; this returns an empty list so a row that somehow got past it reads
+   * as zero rather than throwing inside a render.
+   */
+  function memberValues(arg: FormulaNode | undefined, t: number): number[] | null {
+    if (arg?.type !== "ref") return null;
+    const target = byId.get(arg.variableId);
+    const dimension = dimensions.get(target?.dimensionId ?? "");
+    if (!dimension) return null;
+    return dimension.members.map((m) => valueAt(arg.variableId, m.key, t));
+  }
+
+  /** First and last period index of the calendar year containing `t`. */
+  function yearBounds(t: number): [number, number] {
+    const { year } = model.periods[t];
+    let first = t;
+    while (first > 0 && model.periods[first - 1].year === year) first--;
+    let last = t;
+    while (last < periodCount - 1 && model.periods[last + 1].year === year) last++;
+    return [first, last];
   }
 
   function evalCall(
@@ -205,6 +258,70 @@ export function evaluate(model: Model, scenarioId?: string): Evaluation {
 
       case "ABS":
         return Math.abs(evalNode(first, member, t));
+
+      /** The value in January of this year — the base a year's growth is measured from. */
+      case "OPENING":
+        return evalNode(first, member, yearBounds(t)[0]);
+
+      /** The value in December of this year. Forward-looking on purpose: it is
+       *  what a year-end target is compared against, and the horizon is known. */
+      case "CLOSING":
+        return evalNode(first, member, yearBounds(t)[1]);
+
+      /** GROWTH(x, n = 1) — the rate, not the delta. No base period, no growth. */
+      case "GROWTH": {
+        const n = rest[0] ? evalNode(rest[0], member, t) : 1;
+        const at = t - n;
+        if (at < 0) return 0;
+        const before = evalNode(first, member, at);
+        if (before === 0) return 0;
+        return (evalNode(first, member, t) - before) / before;
+      }
+
+      /**
+       * SPREAD(x, n) — recognise each period's amount evenly over the following
+       * n periods. An annual contract booked in March shows as one twelfth in
+       * each of March to February, which is how deferred revenue actually
+       * behaves. Periods before the model starts contribute nothing but still
+       * divide by n, so the ramp-in is visible rather than hidden.
+       */
+      case "SPREAD": {
+        const span = Math.floor(evalNode(rest[0], member, t));
+        if (span < 1) return 0;
+        let sum = 0;
+        for (let i = Math.max(0, t - span + 1); i <= t; i++) sum += evalNode(first, member, i);
+        return sum / span;
+      }
+
+      case "IF":
+        return evalNode(first, member, t) !== 0
+          ? evalNode(rest[0], member, t)
+          : evalNode(rest[1], member, t);
+
+      /* Across the members of a dimension (§1.6) — a different axis from the
+         scalar MIN/MAX above, which collapse several values in one cell. */
+      case "MEMBER_SUM": {
+        const values = memberValues(first, t);
+        return values ? values.reduce((a, b) => a + b, 0) : 0;
+      }
+
+      case "MEMBER_AVG": {
+        const values = memberValues(first, t);
+        return values?.length ? values.reduce((a, b) => a + b, 0) / values.length : 0;
+      }
+
+      case "MEMBER_MIN": {
+        const values = memberValues(first, t);
+        return values?.length ? Math.min(...values) : 0;
+      }
+
+      case "MEMBER_MAX": {
+        const values = memberValues(first, t);
+        return values?.length ? Math.max(...values) : 0;
+      }
+
+      case "MEMBER_COUNT":
+        return memberValues(first, t)?.length ?? 0;
     }
   }
 

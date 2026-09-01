@@ -1,5 +1,8 @@
 import { z } from "zod";
 
+import { FUNCTION_NAMES, OPERATORS } from "./primitives";
+import type { BinaryOp, FormulaFn } from "./types";
+
 /**
  * The wire schema for a command (`docs/modelling-plan.md` M1.1).
  *
@@ -13,6 +16,16 @@ import { z } from "zod";
  * statement. `satisfies` in the action keeps them from drifting apart silently.
  */
 
+/**
+ * Derived, not retyped. A hand-written list here would be a fourth place the
+ * primitive set is written down (`types.ts`, `primitives.ts`, the Prisma enum)
+ * and the only one nothing checks — so the first formula using a new function
+ * would be rejected at the network boundary with a validation error nobody
+ * could explain. `primitives.ts` is already pinned to the union by `satisfies`.
+ */
+const FN_NAMES = FUNCTION_NAMES as [FormulaFn, ...FormulaFn[]];
+const OP_NAMES = Object.keys(OPERATORS) as [BinaryOp, ...BinaryOp[]];
+
 const FormulaNodeSchema: z.ZodType = z.lazy(() =>
   z.union([
     z.object({ type: z.literal("literal"), value: z.number() }),
@@ -23,13 +36,13 @@ const FormulaNodeSchema: z.ZodType = z.lazy(() =>
     }),
     z.object({
       type: z.literal("binary"),
-      op: z.enum(["+", "-", "*", "/", "^"]),
+      op: z.enum(OP_NAMES),
       left: FormulaNodeSchema,
       right: FormulaNodeSchema,
     }),
     z.object({
       type: z.literal("call"),
-      fn: z.enum(["PRIOR", "NEXT", "YTD", "CUMULATIVE", "MIN", "MAX", "ABS"]),
+      fn: z.enum(FN_NAMES),
       args: z.array(FormulaNodeSchema),
     }),
   ]),

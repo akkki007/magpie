@@ -42,7 +42,19 @@ import type {
  * `+` is not a legal Postgres enum label, and mapping in one table beats scattering
  * `op === "ADD" ? "+" : …` through two files.
  */
-const OP_TO_DB = { "+": "ADD", "-": "SUBTRACT", "*": "MULTIPLY", "/": "DIVIDE", "^": "POWER" } as const;
+const OP_TO_DB = {
+  "+": "ADD",
+  "-": "SUBTRACT",
+  "*": "MULTIPLY",
+  "/": "DIVIDE",
+  "^": "POWER",
+  "=": "EQ",
+  "<>": "NEQ",
+  "<": "LT",
+  "<=": "LTE",
+  ">": "GT",
+  ">=": "GTE",
+} as const satisfies Record<BinaryOp, string>;
 const OP_FROM_DB: Record<string, BinaryOp> = Object.fromEntries(
   Object.entries(OP_TO_DB).map(([symbol, name]) => [name, symbol as BinaryOp]),
 );
