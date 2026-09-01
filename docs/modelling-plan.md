@@ -1,24 +1,28 @@
 # Magpie — Modelling Plan
 
-> **Status (2026-08-30): the engine runs; nothing is persisted.**
+> **Status (2026-09-01): M0, M1 and M2 are built.**
 >
-> `/workspace` is the grid from `designs/modelling-1.jpg`, and every number in it is
-> computed rather than stored for display. What exists:
+> The model lives in Postgres, `/models/[slug]` renders it, edits and formulas are
+> written back through commands, and the formula language is complete. What exists:
 >
 > | File | What it is |
 > |---|---|
 > | `lib/model/types.ts` | The schema below, as TypeScript, field for field |
-> | `lib/model/formula.ts` | AST builders, precedence-aware printer, dependency walk |
+> | `lib/model/primitives.ts` | Arity, parameter names and help for every function — §3 |
+> | `lib/model/formula.ts` | AST builders, precedence- and associativity-aware printer, dependency walk |
+> | `lib/model/parse.ts` | Text → AST, defined as the printer's inverse — M2.1 |
+> | `lib/model/validate.ts` | The gate before a write: names, arity, members, cycles — M2.3 |
 > | `lib/model/engine.ts` | The evaluator — §3 |
 > | `lib/model/grain.ts` | Month → quarter → year rollup — §1.2 |
-> | `lib/model/commands.ts` | The command bus — §1.3 |
-> | `lib/model/revenue-model.ts` | The demo model, in memory, in the shape M0's query returns |
-> | `components/modelling/*` | Grid, toolbar, menu, row flattening |
-> | `scripts/calc-check.ts` | `bun run calc:check` — the aggregation assertions |
+> | `lib/model/commands.ts` | The command bus, in memory — §1.3 |
+> | `lib/model/commands-db.ts` | The same commands, applied to Postgres — M1.1 |
+> | `lib/model/persist.ts` | `writeModel` / `readModel`; the one place a `Decimal` becomes a number |
+> | `prisma/seed-data.ts` | The demo model, in the shape M0's query returns |
+> | `components/modelling/*` | Grid, toolbar, menu, row flattening, formula editor |
+> | `scripts/calc-check.ts` | `bun run calc:check` — aggregation, parser round-trip, validation, golden file |
 >
-> **M0 is the next thing to build.** There is no `Model` table and the module resets on
-> reload. Everything above the `Model` object is ready for that swap: the page builds a
-> `Model` on the server and hands it to the client, and does not care where it came from.
+> **M3 is the next thing to build.** Commands are applied but not recorded, so undo is
+> an in-memory stack and the `History` icon is still decoration.
 >
 > This file replaces `modelling/main.md` and `modelling/brief.md`. Phase M in
 > `learning/path.ts` tracks which tasks Akshay has built and reviewed.
@@ -73,7 +77,8 @@ persist is a tree whose leaves hold `variableId`s, printed to a string at displa
 
 *Why:* renaming "Revenue" to "Net Revenue" must not break sixty formulas, and we need the
 dependency graph anyway — parsing 200 formula strings on every recalculation is wasted
-work. *Cost:* we own a parser and a printer. The printer is built; the parser is M2.
+work. *Cost:* we own a parser and a printer. Both are built, and the parser is defined as
+the printer's exact inverse — see M2.1 for why that is the whole design and not a detail.
 
 ### 1.2 Aggregation belongs to the variable, not the chart
 
@@ -205,9 +210,16 @@ one an agent can get wrong and a user must learn:
 - References `[variableId]`, optionally sliced `[v] BY [dimension] = member`.
 - Time: `PRIOR(x, n, fallback)`, `NEXT`, `YTD`, `CUMULATIVE`, `OPENING`, `CLOSING`,
   `GROWTH`, `SPREAD`.
-- Aggregators `SUM AVG MIN MAX COUNT` over a dimension.
+- Aggregators over a dimension, spelled `MEMBER_SUM MEMBER_AVG MEMBER_MIN MEMBER_MAX
+  MEMBER_COUNT` — not a reuse of `MIN`/`MAX`, which collapse several values in one cell
+  rather than several members. §1.6 keeps those two axes apart everywhere else. They take
+  no dimension argument: a variable has exactly one, so naming it again would only create
+  a way to name the wrong one.
 
-Built today: `PRIOR NEXT YTD CUMULATIVE MIN MAX ABS`, the four operators, and slicing.
+All of it is built. `lib/model/primitives.ts` is the one table the tokeniser, the
+validator, the editor's autocomplete and the agent's tool schema all read, so adding a
+primitive is one entry plus one `case` in the evaluator — and not adding one is visibly a
+decision rather than an omission.
 
 ---
 
@@ -406,14 +418,65 @@ on every query the moment A3's org tables exist.
 
 ### M2 — The formula parser
 
-**M2.1 — Tokeniser and parser** — text → `FormulaNode`, with precedence matching the
-printer that already exists, and names resolved to ids against the model.
-**M2.2 — The formula editor** — click a pill, edit as text, with autocomplete over
-variable names and inline errors. *Respect:* §1.1 — what is saved is the tree.
-**M2.3 — Validation before write** — unknown name, arity error and cycle are rejected with
-a message naming the loop, at the boundary, for both UI and agent input.
-**M2.4 — The remaining primitives** — `IF`, comparison, `OPENING`, `CLOSING`, `GROWTH`,
-`SPREAD`, and dimension aggregators. *Done when:* each has a golden-file test.
+*M2 is built.* Clicking a formula pill opens it as text; Enter parses it and saves the tree.
+
+**The parser's grammar is not "a formula syntax" — it is defined as the exact inverse of
+`printFormula`.** That constraint is the design, not a detail. The editor hands the user a
+printed string and saves what comes back, so a formula opened and closed untouched has to
+return the identical tree; anything less and the editor silently rewrites models nobody
+edited. It therefore accepts every glyph the printer emits (`× – ÷ ≥ ·`) alongside the ASCII
+a keyboard can produce, and nothing else — §3 sketches a `BY` clause, the printer has never
+emitted one, and a second spelling is a second thing to keep in sync. `calc:check`
+round-trips all 38 formulas in the seeded model and the primitive fixture through
+print → parse → tree comparison.
+
+That constraint found a real bug before the editor existed. `printFormula` rendered any
+literal below 1 as a percentage to two decimal places, so a churn rate of
+`0.010145423274166877` printed as `1.01%`. Harmless while the string was only ever
+displayed; the moment it became editable, saving a formula nobody had touched would have
+rewritten the rate. Percent notation is now used only where it is exactly reversible.
+
+**Names, not identifiers.** `Opening ARR + New ARR` has spaces inside its operands, so no
+lexical rule finds the boundary — the tokeniser knows the model and takes the longest
+matching name. Which is also why names are matched *before* brackets, digits and operators:
+a user may call a variable `Q1 (plan)` or `2026 Target`, and a tokeniser that lexes
+punctuation first can never see those. A word-boundary guard is what stops that eating the
+`MA` of `MAX(`.
+
+**The cycle check had to be taught what the engine already knows.** The engine memoises
+`(variable, member, period)` and calls only a repeat visit to the same key circular, which
+is what makes `Opening ARR = PRIOR(Closing ARR)` legal — the central formula of every
+waterfall in finance. A validator walking the variable graph rejects it. So an edge counts
+only when it can read the *current* period: `PRIOR` and `NEXT` with a non-zero literal shift
+are lagged; `YTD`, `CUMULATIVE`, `GROWTH`, `SPREAD`, `OPENING` and `CLOSING` are not, because
+every one of those includes period `t` in its range. A computed shift counts as immediate —
+rejecting a formula that might be circular is recoverable, accepting one that is means a
+page of zeroes.
+
+**M2.1 — Tokeniser and parser** — text → `FormulaNode`, precedence and associativity
+matching the printer, names resolved to ids against the model. *Built.* There is no unary
+node: `-5` folds to a literal and `-x` becomes `0 – x`, because the AST has four shapes and
+a fifth costs a column in `formula_node` for a case that evaluates identically.
+**M2.2 — The formula editor** — *built.* Autocomplete over variables and functions, the
+function help coming from the same `primitives.ts` the parser reads, so the menu cannot
+describe a language the parser does not accept. Inline errors on every keystroke, Save
+unavailable until they clear, and an unchanged tree dispatches no command at all — otherwise
+every open-and-close would write a row and push an undo step nobody asked for.
+**M2.3 — Validation before write** — *built*, at the write path in `commands-db.ts` rather
+than in the editor, because §5's agent posts a tree and never parses anything. The editor
+runs the same function as a courtesy; the server runs it as the rule.
+**M2.4 — The remaining primitives** — *built*: `IF`, the six comparison operators,
+`OPENING`, `CLOSING`, `GROWTH`, `SPREAD`, and the five `MEMBER_*` aggregators. Pinned by
+`scripts/golden/primitives.json` — a fifteen-period fixture spanning a year boundary with
+one row per primitive, every value hand-checked. It regenerates only under
+`--write-golden`: a harness that rewrites its own expectations on failure has recorded the
+bug as the truth.
+
+Two smaller decisions inside M2.4. Comparison yields 1 or 0 rather than a boolean, so a
+cell is always a number and the grid never has to format a third kind of thing. And it
+compares with an epsilon of half the last digit `numeric(20,6)` can store: exact `===` on
+doubles lets a value be neither equal to, greater than, nor less than another, and an `IF`
+built on that is unfixable from the user's side.
 
 ### M3 — The command bus, persisted
 
