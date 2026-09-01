@@ -10,7 +10,8 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 
 import { evaluate } from "../lib/model/engine";
 import { bucketsFor, rollup } from "../lib/model/grain";
-import { div, ref } from "../lib/model/formula";
+import { div, printFormula, ref } from "../lib/model/formula";
+import { parseFormula } from "../lib/model/parse";
 import { db } from "../lib/db";
 import { readModel } from "../lib/model/persist";
 import { V } from "../prisma/seed-data";
@@ -170,6 +171,104 @@ console.log("\nCycles");
   check("circular reference is detected", Object.keys(result.errors).length > 0,
     JSON.stringify(result.errors));
   check("the honest lag in Opening ARR is NOT flagged", !result.errors[V.openingArr]);
+}
+
+/**
+ * The parser (M2.1).
+ *
+ * The claim is not "it parses formulas" but the narrower, testable one: it is
+ * the printer's inverse. Every formula in the seeded model and in the
+ * primitive fixture is printed, re-parsed and compared as a tree — which
+ * covers the grammar with real data rather than with the handful of strings
+ * whoever wrote the parser happened to think of.
+ *
+ * The direction matters. `print → parse → same tree` is what M2.2 relies on:
+ * open a formula, change nothing, save, and the model is untouched. The other
+ * direction (`parse → print`) is deliberately not character-exact, because a
+ * user may type `-x`, `a*b` or redundant brackets and get back `0 – x`,
+ * `a × b` and no brackets — normalisation, not corruption.
+ */
+console.log("\nParser round-trip");
+{
+  const canonical = (value: unknown): unknown =>
+    Array.isArray(value)
+      ? value.map(canonical)
+      : value && typeof value === "object"
+        ? Object.fromEntries(
+            Object.entries(value as Record<string, unknown>)
+              .sort(([a], [b]) => a.localeCompare(b))
+              .map(([k, v]) => [k, canonical(v)]),
+          )
+        : value;
+  const same = (a: unknown, b: unknown) =>
+    JSON.stringify(canonical(a)) === JSON.stringify(canonical(b));
+
+  for (const source of [model, PRIMITIVE_MODEL]) {
+    const nameOf = (id: string) =>
+      source.variables.find((v) => v.id === id)?.name ?? id;
+    const formulas = source.variables.filter((v) => v.formula);
+    let mismatches = 0;
+    let firstFailure = "";
+
+    for (const variable of formulas) {
+      const text = printFormula(variable.formula!, nameOf);
+      const parsed = parseFormula(text, source);
+      const ok = parsed.ok && same(parsed.node, variable.formula);
+      if (!ok) {
+        mismatches++;
+        if (!firstFailure) {
+          firstFailure = parsed.ok
+            ? `${variable.name}: "${text}" → ${JSON.stringify(parsed.node)}`
+            : `${variable.name}: "${text}" → ${parsed.error.message}`;
+        }
+      }
+    }
+
+    check(
+      `${formulas.length} formulas in ${source.name} survive print → parse`,
+      mismatches === 0,
+      firstFailure,
+    );
+  }
+
+  const nameOf = (id: string) => model.variables.find((v) => v.id === id)?.name ?? id;
+  const parse = (text: string) => parseFormula(text, model);
+  const shows = (text: string) => {
+    const result = parse(text);
+    return result.ok ? printFormula(result.node, nameOf) : `!${result.error.message}`;
+  };
+  const rejects = (text: string) => !parse(text).ok;
+
+  check("× and * are the same operator", shows("2 * 3") === shows("2 × 3"), shows("2 * 3"));
+  check("– and - are the same operator", shows("5 - 2") === shows("5 – 2"), shows("5 - 2"));
+  check(">= and ≥ are the same operator", shows("5 >= 2") === shows("5 ≥ 2"), shows("5 >= 2"));
+  check("× binds tighter than +", shows("2 + 3 * 4") === "2 + 3 × 4", shows("2 + 3 * 4"));
+  check("brackets survive when they matter", shows("(2 + 3) * 4") === "(2 + 3) × 4", shows("(2 + 3) * 4"));
+  check("redundant brackets are dropped", shows("(2 * 3) + 4") === "2 × 3 + 4", shows("(2 * 3) + 4"));
+  check("^ is right-associative", shows("2 ^ 3 ^ 2") === "2 ^ 3 ^ 2", shows("2 ^ 3 ^ 2"));
+  check("^ left operand keeps its bracket", shows("(2 ^ 3) ^ 2") === "(2 ^ 3) ^ 2", shows("(2 ^ 3) ^ 2"));
+  check("a percentage is a decimal", shows("7.5%") === "7.5%", shows("7.5%"));
+  check("collapsed whitespace still finds a name", shows("Opening  ARR") === "Opening ARR", shows("Opening  ARR"));
+  check("names are case-insensitive", shows("opening arr") === "Opening ARR", shows("opening arr"));
+  check("a member slice parses", shows("ACV · growth") === "ACV · growth", shows("ACV · growth"));
+  check("a member name resolves to its key", shows("ACV · Growth") === "ACV · growth", shows("ACV · Growth"));
+  check("unary minus folds into a literal", shows("-5") === "-5", shows("-5"));
+  check("unary minus on a name becomes 0 – x", shows("-Opening ARR") === "0 – Opening ARR", shows("-Opening ARR"));
+
+  check("an unknown name is rejected", rejects("Revenue + Nonsense Variable"));
+  check("an unclosed bracket is rejected", rejects("(2 + 3"));
+  check("a trailing operator is rejected", rejects("2 +"));
+  check("a chained comparison is rejected", rejects("1 < 2 < 3"));
+  check("a member on an undimensioned variable is rejected", rejects("Opening ARR · growth"));
+  check("an unknown member is rejected", rejects("ACV · platinum"));
+  check("an empty formula is rejected", rejects("   "));
+
+  const unknown = parse("Opening ARR + Mystery");
+  check(
+    "the error points at the offending characters",
+    !unknown.ok && "Opening ARR + ".length === unknown.error.start,
+    unknown.ok ? "parsed" : `${unknown.error.start}–${unknown.error.end}`,
+  );
 }
 
 /**
