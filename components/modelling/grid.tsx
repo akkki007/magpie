@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ChevronDown,
   ChevronRight,
@@ -74,10 +74,24 @@ const CHIP: Record<ChipTone, string> = {
   blue: "bg-chip-blue",
 };
 
-const NAME_WIDTH = 292;
-const TREND_WIDTH = 116;
-const FORMULA_WIDTH = 246;
-const PERIOD_WIDTH = 108;
+/**
+ * The grid's geometry, exported because virtualisation made it load-bearing outside this file.
+ *
+ * Scrolling the selection into view used to be `querySelector('[data-selected]')`, which works
+ * only while every cell is in the DOM. It no longer is, so the caller computes the position
+ * from these instead — and both axes being a fixed size is exactly what makes that possible.
+ */
+export const GRID_GEOMETRY = {
+  headerHeight: 32,
+  rowHeight: (compact: boolean) => (compact ? 26 : 30),
+  nameWidth: 292,
+  trendWidth: 116,
+  formulaWidth: 246,
+  periodWidth: 108,
+} as const;
+
+const { nameWidth: NAME_WIDTH, trendWidth: TREND_WIDTH, formulaWidth: FORMULA_WIDTH, periodWidth: PERIOD_WIDTH } =
+  GRID_GEOMETRY;
 
 export function Grid({
   model,
@@ -91,10 +105,13 @@ export function Grid({
   renaming,
   adding,
   api,
+  viewport,
 }: {
   model: Model;
   rows: GridRow[];
   buckets: Bucket[];
+  /** The scrolling element the grid lives in — the window virtualisation reads. */
+  viewport: React.RefObject<HTMLElement | null>;
   evaluation: Evaluation;
   view: ViewOptions;
   selection: Selection | null;
@@ -136,8 +153,90 @@ export function Grid({
     return new Set(dependenciesOf(target?.formula));
   }, [trace, model.variables]);
 
-  const rowHeight = view.compact ? 26 : 30;
+  const rowHeight = GRID_GEOMETRY.rowHeight(view.compact);
   const metaColumns = 1 + (view.trend ? 1 : 0) + (view.formula ? 1 : 0);
+
+  /**
+   * Virtualisation, both axes (`docs/modelling-plan.md` M1.3).
+   *
+   * Done now, at 22 rows and 24 columns, because nothing is slow yet — which is precisely the
+   * window in which it is cheap. The plan's warning is the reason: *retrofitting it into a
+   * working grid is a rewrite*, and a grid that has grown selection, editing, tracing and
+   * sticky columns around an assumption that every cell exists is a much worse place to start.
+   *
+   * Hand-rolled rather than a library, for one reason that matters here: both axes are a
+   * **fixed size** — `rowHeight` is 26 or 30, `PERIOD_WIDTH` is 108 — so the first and last
+   * visible index are arithmetic, not measurement. A virtualiser that measures elements would
+   * be solving a problem this grid does not have, and would fight the sticky header and first
+   * column while doing it.
+   *
+   * The skipped rows and columns become spacers of exactly the right size, so scroll position,
+   * scrollbar length and the sticky offsets are all unchanged. Nothing outside this block
+   * knows the grid is windowed.
+   */
+  const [port, setPort] = useState({ top: 0, left: 0, height: 900, width: 1400 });
+
+  useEffect(() => {
+    const element = viewport.current;
+    if (!element) return;
+
+    // Read straight from the element rather than storing scroll in React state per event:
+    // this runs on every scroll frame, and a setState round trip per pixel is the one way to
+    // make a virtualised grid slower than the grid it replaced.
+    let frame = 0;
+    const read = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() =>
+        setPort({
+          top: element.scrollTop,
+          left: element.scrollLeft,
+          height: element.clientHeight,
+          width: element.clientWidth,
+        }),
+      );
+    };
+
+    read();
+    element.addEventListener("scroll", read, { passive: true });
+    const observer = new ResizeObserver(read);
+    observer.observe(element);
+    return () => {
+      cancelAnimationFrame(frame);
+      element.removeEventListener("scroll", read);
+      observer.disconnect();
+    };
+  }, [viewport]);
+
+  /** Rows above and below the fold that are rendered anyway, so scrolling never shows a gap. */
+  const OVERSCAN_ROWS = 8;
+  const OVERSCAN_COLUMNS = 3;
+
+  const firstRow = Math.max(0, Math.floor(port.top / rowHeight) - OVERSCAN_ROWS);
+  const lastRow = Math.min(
+    rows.length,
+    Math.ceil((port.top + port.height) / rowHeight) + OVERSCAN_ROWS,
+  );
+  const visibleRows = rows.slice(firstRow, lastRow);
+  const padTop = firstRow * rowHeight;
+  const padBottom = (rows.length - lastRow) * rowHeight;
+
+  const leadWidth =
+    NAME_WIDTH + (view.trend ? TREND_WIDTH : 0) + (view.formula ? FORMULA_WIDTH : 0);
+  const firstColumn = Math.max(
+    0,
+    Math.floor((port.left - leadWidth) / PERIOD_WIDTH) - OVERSCAN_COLUMNS,
+  );
+  const lastColumn = Math.min(
+    buckets.length,
+    Math.ceil((port.left + port.width - leadWidth) / PERIOD_WIDTH) + OVERSCAN_COLUMNS,
+  );
+  const visibleBuckets = buckets.slice(firstColumn, lastColumn);
+  const padLeft = firstColumn * PERIOD_WIDTH;
+  const padRight = (buckets.length - lastColumn) * PERIOD_WIDTH;
+
+  /** Every `<td>` a full-width row has to span: the meta columns, the spacers, the periods. */
+  const spannedColumns =
+    metaColumns - 1 + (padLeft > 0 ? 1 : 0) + visibleBuckets.length + (padRight > 0 ? 1 : 0) + 1;
 
   return (
     <table className="border-separate border-spacing-0 text-[12px] tabular-nums">
@@ -145,9 +244,11 @@ export function Grid({
         <col style={{ width: NAME_WIDTH }} />
         {view.trend && <col style={{ width: TREND_WIDTH }} />}
         {view.formula && <col style={{ width: FORMULA_WIDTH }} />}
-        {buckets.map((bucket) => (
+        {padLeft > 0 && <col style={{ width: padLeft }} />}
+        {visibleBuckets.map((bucket) => (
           <col key={bucket.key} style={{ width: PERIOD_WIDTH }} />
         ))}
+        {padRight > 0 && <col style={{ width: padRight }} />}
         {/* Spacer: absorbs the leftover width so the period columns keep a
             fixed size instead of stretching on a wide screen. */}
         <col />
@@ -166,17 +267,24 @@ export function Grid({
           </th>
           {view.trend && <HeadCell>Trend</HeadCell>}
           {view.formula && <HeadCell>Formula</HeadCell>}
-          {buckets.map((bucket) => (
+          {padLeft > 0 && <HeadCell divider={false}>{null}</HeadCell>}
+          {visibleBuckets.map((bucket) => (
             <HeadCell key={bucket.key} align="right" divider={false}>
               {bucket.label}
             </HeadCell>
           ))}
+          {padRight > 0 && <HeadCell divider={false}>{null}</HeadCell>}
           <HeadCell divider={false}>{null}</HeadCell>
         </tr>
       </thead>
 
       <tbody>
-        {rows.map((row) => {
+        {padTop > 0 && (
+          <tr aria-hidden style={{ height: padTop }}>
+            <td colSpan={spannedColumns + 1} />
+          </tr>
+        )}
+        {visibleRows.map((row) => {
           if (row.kind === "group") {
             return (
               <tr key={row.key} className="group">
@@ -205,7 +313,7 @@ export function Grid({
                   </span>
                 </th>
                 <td
-                  colSpan={metaColumns - 1 + buckets.length + 1}
+                  colSpan={spannedColumns}
                   className="border-b border-line bg-surface"
                 />
               </tr>
@@ -239,7 +347,7 @@ export function Grid({
                   )}
                 </th>
                 <td
-                  colSpan={metaColumns - 1 + buckets.length + 1}
+                  colSpan={spannedColumns}
                   className="border-b border-line bg-surface"
                 />
               </tr>
@@ -453,7 +561,13 @@ export function Grid({
               )}
 
               {/* ── Periods ──────────────────────────────────────────────── */}
-              {buckets.map((bucket, column) => {
+              {padLeft > 0 && <td aria-hidden className="border-b border-line" />}
+              {visibleBuckets.map((bucket, offset) => {
+                // The global column index, not the position in the window. Selection,
+                // editing and keyboard movement all address columns absolutely, and slicing
+                // the array without re-adding the offset would silently point every one of
+                // them at the wrong period the moment the grid scrolls.
+                const column = firstColumn + offset;
                 const isSelected =
                   selection?.rowKey === row.key && selection.column === column;
                 const isEditing =
@@ -503,6 +617,11 @@ export function Grid({
             </tr>
           );
         })}
+        {padBottom > 0 && (
+          <tr aria-hidden style={{ height: padBottom }}>
+            <td colSpan={spannedColumns + 1} />
+          </tr>
+        )}
       </tbody>
     </table>
   );

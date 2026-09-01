@@ -346,7 +346,7 @@ M3 where there is something to write to them.
 
 *The grid itself is built. This phase is what the DB makes newly possible.*
 
-*M1.1, M1.2 and M1.4 are built; M1.3 is not.* An edited cell survives a reload. The grid
+*M1 is built.* An edited cell survives a reload. The grid
 applies the command locally and a server action persists it, so typing stays at keyboard speed
 across the round trip — and the local apply is not a cache of the server's answer, it is the
 same `applyCommand` the server runs.
@@ -367,9 +367,32 @@ edit may have overwritten the same cell. There is no correct surgical rollback w
 resolution the model does not have, so the screen says it is ahead of the database and offers
 the operation that is certainly correct: read it again.
 
-**M1.3 is the outstanding one**, and the plan's own warning is now the situation: *do it before
-the grid is worth virtualising; retrofitting it into a working grid is a rewrite.* At 22 rows
-and 24 columns nothing is slow yet, which is exactly the window in which it is cheap.
+**M1.3 — both axes are virtualised**, done at 22 rows and 24 columns precisely because nothing
+was slow yet. At the plan's target of 200 × 60 the grid now renders **36 rows by 18 columns**,
+about 5% of the cells.
+
+Hand-rolled rather than a library, for one reason: both axes are a *fixed* size — `rowHeight`
+is 26 or 30, a period column is 108 — so the first and last visible index are arithmetic, not
+measurement. A virtualiser that measures elements would solve a problem this grid does not
+have and fight the sticky header and first column while doing it. Skipped rows and columns
+become spacers of exactly the right size, so scroll position, scrollbar length and the sticky
+offsets are unchanged, and nothing outside the grid knows it is windowed.
+
+Two things it broke, both fixed:
+
+- **The cell index.** Slicing the bucket array makes the map index local, and selection,
+  editing and keyboard movement all address columns absolutely. Without re-adding the offset
+  every one of them would silently point at the wrong period the moment the grid scrolled.
+- **Scrolling the selection into view.** That was `querySelector('[data-selected="true"]')`,
+  which works only while every cell is in the DOM. A cell outside the window has no node, so
+  the view would not follow the selection — and because it did not follow, the cell was never
+  rendered. Arrow-keying past the fold would have looked like a frozen grid. The position is
+  computed now, which is better anyway: it accounts for the sticky header and first column
+  occluding the cell, which `block: "nearest"` does not.
+
+Checked over all 12,000 cells of a 200 × 60 grid: every selection lands inside the rendered
+window from any starting scroll position, the spacers reconstruct the full height at every
+offset, and the window stays bounded.
 
 **M1.1 — Server actions for edits** — an edited cell writes through a command (§1.3) in a
 server action, not client state. *Done when:* a reload keeps the edit.

@@ -2,7 +2,13 @@
 
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 
-import { Grid, type Editing, type GridApi, type Selection } from "@/components/modelling/grid";
+import {
+  Grid,
+  GRID_GEOMETRY,
+  type Editing,
+  type GridApi,
+  type Selection,
+} from "@/components/modelling/grid";
 import { flattenRows, isSelectable, type GridRow } from "@/components/modelling/rows";
 import { Toolbar, type ViewOptions } from "@/components/modelling/toolbar";
 import { toast } from "@/components/ui/toast";
@@ -199,13 +205,45 @@ export function Workbench({ initialModel, slug }: { initialModel: Model; slug: s
     [rows, buckets.length],
   );
 
-  /** Keep the selected cell on screen without yanking the whole page around. */
+  /**
+   * Keep the selected cell on screen without yanking the whole page around.
+   *
+   * This used to be `querySelector('[data-selected="true"]')` and `scrollIntoView`, which
+   * stopped working the moment the grid was virtualised (M1.3): a cell outside the rendered
+   * window has no node, so the query found nothing, the view did not follow the selection, and
+   * because the view did not follow, the cell was never rendered. Arrow-keying past the fold
+   * would have looked like the grid had frozen.
+   *
+   * So the position is computed rather than measured. That is only possible because both axes
+   * are a fixed size — the same property that let the virtualiser be arithmetic instead of a
+   * measuring library — and it is strictly better than the DOM version anyway: no dependency
+   * on what happens to be mounted, and it accounts for the sticky header and sticky first
+   * column occluding the cell, which `block: "nearest"` does not.
+   */
   useEffect(() => {
     if (!selection) return;
-    scrollRef.current
-      ?.querySelector('[data-selected="true"]')
-      ?.scrollIntoView({ block: "nearest", inline: "nearest" });
-  }, [selection]);
+    const element = scrollRef.current;
+    if (!element) return;
+
+    const index = rows.findIndex((row) => row.key === selection.rowKey);
+    if (index < 0) return;
+
+    const { headerHeight, nameWidth, trendWidth, formulaWidth, periodWidth } = GRID_GEOMETRY;
+    const height = GRID_GEOMETRY.rowHeight(view.compact);
+    const lead = nameWidth + (view.trend ? trendWidth : 0) + (view.formula ? formulaWidth : 0);
+
+    const top = headerHeight + index * height;
+    if (top < element.scrollTop + headerHeight) element.scrollTop = top - headerHeight;
+    else if (top + height > element.scrollTop + element.clientHeight) {
+      element.scrollTop = top + height - element.clientHeight;
+    }
+
+    const left = lead + selection.column * periodWidth;
+    if (left < element.scrollLeft + lead) element.scrollLeft = left - lead;
+    else if (left + periodWidth > element.scrollLeft + element.clientWidth) {
+      element.scrollLeft = left + periodWidth - element.clientWidth;
+    }
+  }, [selection, rows, view.compact, view.trend, view.formula]);
 
   /* ── Editing ───────────────────────────────────────────────────────────*/
   const startEdit = useCallback(
@@ -504,6 +542,7 @@ export function Workbench({ initialModel, slug }: { initialModel: Model; slug: s
           model={model}
           rows={rows}
           buckets={buckets}
+          viewport={scrollRef}
           evaluation={evaluation}
           view={view}
           selection={selection}
