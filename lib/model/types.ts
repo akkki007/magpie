@@ -138,21 +138,23 @@ export type Variable = {
   note?: string;
 };
 
-/** An overlay, never a copy (§4). Unoverridden variables fall through to base. */
+/**
+ * An overlay, never a copy (§4). Unoverridden variables fall through to base.
+ *
+ * The shapes an override can take live in `scenario.ts`, because they are parsed
+ * out of a `jsonb` column and the parser and the type should not be written twice.
+ */
 export type ScenarioOverride = {
   variableId: string;
-  /**
-   * A multiplier on an INPUT variable's values. The real column is `jsonb` so
-   * it can hold replacement values or a distribution (Monte Carlo) later; a
-   * scalar is the compressed form that keeps this fixture readable.
-   */
-  scale: number;
+  value: import("./scenario").Override;
 };
 
 export type Scenario = {
   id: string;
   name: string;
   isBase: boolean;
+  /** Scenarios branch from scenarios (§2); the base case has no parent. */
+  parentId?: string;
   overrides: ScenarioOverride[];
 };
 

@@ -1,5 +1,6 @@
+import type { Override } from "./scenario";
 import { TOTAL } from "./types";
-import type { FormulaNode, Model, Variable, VariableKind } from "./types";
+import type { FormulaNode, Model, Scenario, Variable, VariableKind } from "./types";
 
 /**
  * The command bus (`docs/modelling-plan.md` §1.3).
@@ -45,7 +46,18 @@ export type Command =
       /** The variable's input series, so an undone delete comes back whole. */
       inputs?: Record<string, number[]>;
     }
-  | { type: "RemoveVariable"; variableId: string };
+  | { type: "RemoveVariable"; variableId: string }
+  /* ── Scenarios (§4, M4.1) ───────────────────────────────────────────────*/
+  | { type: "CreateScenario"; scenario: Scenario }
+  | { type: "RenameScenario"; scenarioId: string; name: string }
+  | { type: "DeleteScenario"; scenarioId: string }
+  | {
+      type: "SetOverride";
+      scenarioId: string;
+      variableId: string;
+      /** `null` removes the override, so the variable falls back through to base. */
+      value: Override | null;
+    };
 
 export type CommandResult = { model: Model; inverse: Command; label: string };
 
@@ -69,6 +81,14 @@ export function labelFor(command: Command): string {
       return "Add variable";
     case "RemoveVariable":
       return "Delete variable";
+    case "CreateScenario":
+      return "Add scenario";
+    case "RenameScenario":
+      return "Rename scenario";
+    case "DeleteScenario":
+      return "Delete scenario";
+    case "SetOverride":
+      return command.value ? "Override in scenario" : "Clear override";
   }
 }
 
@@ -171,6 +191,69 @@ export function applyCommand(model: Model, command: Command): CommandResult {
           inputs: nextInputs,
         },
         inverse: { type: "InsertVariable", index, variable, inputs },
+        label: labelFor(command),
+      };
+    }
+    /* ── Scenarios ─────────────────────────────────────────────────────*/
+
+    case "CreateScenario":
+      return {
+        model: { ...model, scenarios: [...model.scenarios, command.scenario] },
+        inverse: { type: "DeleteScenario", scenarioId: command.scenario.id },
+        label: labelFor(command),
+      };
+
+    case "RenameScenario": {
+      const before = model.scenarios.find((s) => s.id === command.scenarioId)?.name ?? "";
+      return {
+        model: {
+          ...model,
+          scenarios: model.scenarios.map((s) =>
+            s.id === command.scenarioId ? { ...s, name: command.name } : s,
+          ),
+        },
+        inverse: { type: "RenameScenario", scenarioId: command.scenarioId, name: before },
+        label: labelFor(command),
+      };
+    }
+
+    case "DeleteScenario": {
+      const scenario = model.scenarios.find((s) => s.id === command.scenarioId);
+      if (!scenario) return { model, inverse: command, label: labelFor(command) };
+      return {
+        model: {
+          ...model,
+          scenarios: model.scenarios.filter((s) => s.id !== command.scenarioId),
+        },
+        // The whole scenario, overrides included — an undone delete has to bring back the
+        // numbers, not just the name.
+        inverse: { type: "CreateScenario", scenario },
+        label: labelFor(command),
+      };
+    }
+
+    case "SetOverride": {
+      const scenario = model.scenarios.find((s) => s.id === command.scenarioId);
+      const before = scenario?.overrides.find((o) => o.variableId === command.variableId);
+
+      const overrides = [
+        ...(scenario?.overrides ?? []).filter((o) => o.variableId !== command.variableId),
+        ...(command.value ? [{ variableId: command.variableId, value: command.value }] : []),
+      ];
+
+      return {
+        model: {
+          ...model,
+          scenarios: model.scenarios.map((s) =>
+            s.id === command.scenarioId ? { ...s, overrides } : s,
+          ),
+        },
+        inverse: {
+          type: "SetOverride",
+          scenarioId: command.scenarioId,
+          variableId: command.variableId,
+          value: before?.value ?? null,
+        },
         label: labelFor(command),
       };
     }

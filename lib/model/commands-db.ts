@@ -217,5 +217,101 @@ export async function applyCommandToDb(
       if (count === 0) throw new Error(`variable ${command.variableId} is not in this model`);
       return;
     }
+
+    /* ── Scenarios (M4.1) ───────────────────────────────────────────────*/
+
+    case "CreateScenario": {
+      const { scenario } = command;
+      if (scenario.parentId) {
+        const parent = await tx.scenario.findFirst({
+          where: { id: scenario.parentId, modelId },
+          select: { id: true },
+        });
+        if (!parent) throw new Error("that scenario branches from one that is not here");
+      }
+
+      await tx.scenario.create({
+        data: {
+          id: scenario.id,
+          modelId,
+          name: scenario.name,
+          isBase: scenario.isBase,
+          parentId: scenario.parentId ?? null,
+          overrides: {
+            create: scenario.overrides.map((override) => ({
+              variableId: override.variableId,
+              value: override.value as unknown as Prisma.InputJsonValue,
+            })),
+          },
+        },
+      });
+      return;
+    }
+
+    case "RenameScenario": {
+      const { count } = await tx.scenario.updateMany({
+        where: { id: command.scenarioId, modelId },
+        data: { name: command.name },
+      });
+      if (count === 0) throw new Error(`scenario ${command.scenarioId} is not in this model`);
+      return;
+    }
+
+    case "DeleteScenario": {
+      const scenario = await tx.scenario.findFirst({
+        where: { id: command.scenarioId, modelId },
+        select: { isBase: true, _count: { select: { children: true } } },
+      });
+      if (!scenario) throw new Error(`scenario ${command.scenarioId} is not in this model`);
+
+      // Two refusals rather than two silent repairs. Deleting the base leaves every
+      // unoverridden variable with nothing to fall through to; deleting a parent would
+      // orphan its branches into roots, which is a different model than the one anybody
+      // asked for. Both are cheap to check and impossible to undo convincingly.
+      if (scenario.isBase) throw new Error("the base case cannot be deleted");
+      if (scenario._count.children > 0) {
+        throw new Error("delete or move its branches first");
+      }
+
+      await tx.scenario.delete({ where: { id: command.scenarioId } });
+      return;
+    }
+
+    case "SetOverride": {
+      const scenario = await tx.scenario.findFirst({
+        where: { id: command.scenarioId, modelId },
+        select: { isBase: true },
+      });
+      if (!scenario) throw new Error(`scenario ${command.scenarioId} is not in this model`);
+      // The base case is what everything else falls through to; an override on it would be
+      // an edit wearing a disguise, and `SetInput` is the command for that.
+      if (scenario.isBase) throw new Error("the base case holds values, not overrides");
+
+      const variable = await tx.variable.findFirst({
+        where: { id: command.variableId, modelId },
+        select: { id: true },
+      });
+      if (!variable) throw new Error(`variable ${command.variableId} is not in this model`);
+
+      if (!command.value) {
+        await tx.scenarioOverride.deleteMany({
+          where: { scenarioId: command.scenarioId, variableId: command.variableId },
+        });
+        return;
+      }
+
+      const value = command.value as unknown as Prisma.InputJsonValue;
+      await tx.scenarioOverride.upsert({
+        where: {
+          scenarioId_variableId: {
+            scenarioId: command.scenarioId,
+            variableId: command.variableId,
+          },
+        },
+        create: { scenarioId: command.scenarioId, variableId: command.variableId, value },
+        update: { value },
+      });
+      return;
+    }
   }
 }

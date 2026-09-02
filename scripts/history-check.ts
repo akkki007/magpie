@@ -29,7 +29,7 @@ import {
 } from "../lib/model/changesets";
 import { applyCommand, labelFor, type Command } from "../lib/model/commands";
 import { evaluate } from "../lib/model/engine";
-import { mul, ref } from "../lib/model/formula";
+import { lit, mul, ref } from "../lib/model/formula";
 import { readModel, writeModel } from "../lib/model/persist";
 import { TOTAL, type Model } from "../lib/model/types";
 
@@ -85,7 +85,16 @@ const FIXTURE: Model = {
   ],
   groups: [{ id: "hc_g", name: "Sales", chip: "sky" }],
   dimensions: [],
-  scenarios: [{ id: "hc_base", name: "Base", isBase: true, overrides: [] }],
+  scenarios: [
+    { id: "hc_base", name: "Base", isBase: true, overrides: [] },
+    {
+      id: "hc_up",
+      name: "Upside",
+      isBase: false,
+      parentId: "hc_base",
+      overrides: [{ variableId: "hc_units", value: { kind: "SCALE", factor: 2 } }],
+    },
+  ],
   inputs: {
     hc_units: { [TOTAL]: [10, 20, 30] },
     hc_price: { [TOTAL]: [5, 5, 5] },
@@ -145,6 +154,26 @@ console.log("\nInverses: Postgres vs the in-memory model");
       index: 1,
       variable: { id: "hc_new", groupId: "hc_g", name: "New Row", kind: "INPUT", format: "COUNT", aggregation: "SUM" },
       inputs: { [TOTAL]: [1, 2, 3] },
+    },
+    {
+      type: "CreateScenario",
+      scenario: {
+        id: "hc_down",
+        name: "Downside",
+        isBase: false,
+        parentId: "hc_base",
+        overrides: [{ variableId: "hc_units", value: { kind: "SCALE", factor: 0.5 } }],
+      },
+    },
+    { type: "RenameScenario", scenarioId: "hc_up", name: "Best case" },
+    { type: "DeleteScenario", scenarioId: "hc_up" },
+    // Replacing an override that is already there — the inverse has to be the *old* one,
+    // not "no override", or undoing an edit inside a scenario deletes the overlay.
+    {
+      type: "SetOverride",
+      scenarioId: "hc_up",
+      variableId: "hc_units",
+      value: { kind: "VALUES", cells: { [TOTAL]: [1, null, null] } },
     },
   ];
 
@@ -268,7 +297,105 @@ console.log("\nServer state vs the client's own copy");
   check("the log agrees on the order", same(historyStacks(await db.$transaction((tx) => readHistory(tx, modelId))).undo, ids));
 }
 
-/* ── 4. Versions and rollback (M3.3) ─────────────────────────────────────*/
+/* ── 4. Scenarios (M4) ───────────────────────────────────────────────────*/
+
+console.log("\nScenarios as overlays");
+{
+  await writeModel(db, FIXTURE, SLUG);
+  const model = await load();
+
+  const base = evaluate(model, "hc_base");
+  const up = evaluate(model, "hc_up");
+  check("the base case is unchanged by an overlay", same(base.series("hc_units"), [10, 20, 30]));
+  check("a SCALE override multiplies the base input", same(up.series("hc_units"), [20, 40, 60]));
+  check(
+    "an unoverridden variable falls through",
+    same(base.series("hc_price"), up.series("hc_price")),
+  );
+  check(
+    "formulas recompute from the overridden input",
+    same(up.series("hc_sales"), [100, 200, 300]),
+    JSON.stringify(up.series("hc_sales")),
+  );
+
+  // A VALUES override pins some periods and not others, which is the difference between
+  // "edit March in the downside" and "freeze the whole row at today's numbers".
+  await edit({
+    type: "SetOverride",
+    scenarioId: "hc_up",
+    variableId: "hc_units",
+    value: { kind: "VALUES", cells: { [TOTAL]: [null, 999, null] } },
+  });
+  const pinned = evaluate(await load(), "hc_up");
+  check("a pinned cell wins", pinned.series("hc_units")[1] === 999);
+  check(
+    "an unpinned cell falls through to the base, not to the old SCALE",
+    same(pinned.series("hc_units"), [10, 999, 30]),
+    JSON.stringify(pinned.series("hc_units")),
+  );
+  check("the grid can tell which cells are held", pinned.isOverridden("hc_units", TOTAL, 1));
+  check("and which are not", !pinned.isOverridden("hc_units", TOTAL, 0));
+  check("and that another variable is not", !pinned.isOverridden("hc_price", TOTAL, 1));
+
+  // Branching: a child inherits what it does not restate, and the nearest override wins
+  // outright rather than composing with its parent.
+  await edit({
+    type: "CreateScenario",
+    scenario: { id: "hc_deep", name: "Deeper", isBase: false, parentId: "hc_up", overrides: [] },
+  });
+  const inherited = evaluate(await load(), "hc_deep");
+  check("a branch inherits its parent's overrides", same(inherited.series("hc_units"), [10, 999, 30]));
+
+  await edit({
+    type: "SetOverride",
+    scenarioId: "hc_deep",
+    variableId: "hc_units",
+    value: { kind: "SCALE", factor: 3 },
+  });
+  const restated = evaluate(await load(), "hc_deep");
+  check(
+    "a restated override replaces the parent's rather than compounding it",
+    same(restated.series("hc_units"), [30, 60, 90]),
+    JSON.stringify(restated.series("hc_units")),
+  );
+
+  // A formula override changes the shape of the calculation, not only its inputs (§4).
+  await edit({
+    type: "SetOverride",
+    scenarioId: "hc_up",
+    variableId: "hc_sales",
+    value: { kind: "FORMULA", formula: mul(ref("hc_units"), lit(100)) },
+  });
+  const reshaped = evaluate(await load(), "hc_up");
+  check("a FORMULA override replaces the variable's own", same(reshaped.series("hc_sales"), [1000, 99900, 3000]));
+  check("and the base case still uses the original", same(evaluate(await load(), "hc_base").series("hc_sales"), [50, 100, 150]));
+
+  const refuses = async (command: Parameters<typeof edit>[0]) =>
+    edit(command).then(
+      () => "",
+      (error: unknown) => (error instanceof Error ? error.message : String(error)),
+    );
+
+  check(
+    "the base case cannot be deleted",
+    (await refuses({ type: "DeleteScenario", scenarioId: "hc_base" })).includes("base case"),
+  );
+  check(
+    "a scenario with branches cannot be deleted",
+    (await refuses({ type: "DeleteScenario", scenarioId: "hc_up" })).includes("branches"),
+  );
+  check(
+    "the base case does not take overrides",
+    (await refuses({
+      type: "SetOverride",
+      scenarioId: "hc_base",
+      variableId: "hc_units",
+      value: { kind: "SCALE", factor: 2 },
+    })).includes("values, not overrides"),
+  );
+}
+
+/* ── 5. Versions and rollback (M3.3) ─────────────────────────────────────*/
 
 console.log("\nRollback");
 {

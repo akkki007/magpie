@@ -1,5 +1,6 @@
+import { resolveOverrides } from "./scenario";
 import { TOTAL } from "./types";
-import type { Model, Scenario, Variable } from "./types";
+import type { Model, Variable } from "./types";
 import type { FormulaNode } from "./types";
 
 /**
@@ -50,19 +51,19 @@ export type Evaluation = {
   series: (variableId: string, member?: string) => Series;
   /** Single cell, for cheap reads (the sparkline uses `series`). */
   valueAt: (variableId: string, member: string, period: number) => number;
+  /** True where the active scenario is holding this cell, not the base case (M4.2). */
+  isOverridden: (variableId: string, member: string, period: number) => boolean;
   /** `variableId → message`. A cell in an errored row renders as `—`. */
   errors: Record<string, string>;
 };
 
 export function evaluate(model: Model, scenarioId?: string): Evaluation {
-  const scenario: Scenario | undefined =
-    model.scenarios.find((s) => s.id === scenarioId) ??
-    model.scenarios.find((s) => s.isBase);
-
-  /** Scenario overlay, resolved once: `variableId → multiplier` (§4). */
-  const scale = new Map<string, number>(
-    (scenario?.overrides ?? []).map((o) => [o.variableId, o.scale]),
-  );
+  /**
+   * The overlay, resolved once (§4). Walks the branch chain, nearest override winning —
+   * see `resolveOverrides`. Doing it here rather than per cell keeps the hot path a map
+   * lookup, and means a scenario's answer cannot change halfway through an evaluation.
+   */
+  const overrides = resolveOverrides(model, scenarioId);
 
   const byId = new Map(model.variables.map((v) => [v.id, v]));
   const dimensions = new Map(model.dimensions.map((d) => [d.id, d]));
@@ -74,13 +75,41 @@ export function evaluate(model: Model, scenarioId?: string): Evaluation {
 
   const key = (id: string, member: string, t: number) => `${id}|${member}|${t}`;
 
-  function inputAt(variable: Variable, member: string, t: number): number {
+  function baseInputAt(variable: Variable, member: string, t: number): number {
     const table = model.inputs[variable.id];
     // Falling back to the TOTAL row lets an undimensioned assumption be read
     // from inside a member context without duplicating it per member.
     const row = table?.[member] ?? table?.[TOTAL];
-    const raw = row?.[t] ?? 0;
-    return raw * (scale.get(variable.id) ?? 1);
+    return row?.[t] ?? 0;
+  }
+
+  function inputAt(variable: Variable, member: string, t: number): number {
+    const override = overrides.get(variable.id);
+
+    if (override?.kind === "VALUES") {
+      // `null` means this period is not overridden, which is what lets someone change
+      // March in the downside without pinning every other month to whatever it was.
+      const pinned = override.cells[member]?.[t] ?? override.cells[TOTAL]?.[t];
+      if (pinned !== null && pinned !== undefined) return pinned;
+      return baseInputAt(variable, member, t);
+    }
+
+    if (override?.kind === "SCALE") {
+      return baseInputAt(variable, member, t) * override.factor;
+    }
+
+    return baseInputAt(variable, member, t);
+  }
+
+  /** Which cells this scenario is actually holding — what the grid marks (M4.2). */
+  function isOverridden(variableId: string, member: string, t: number): boolean {
+    const override = overrides.get(variableId);
+    if (!override) return false;
+    if (override.kind === "VALUES") {
+      const pinned = override.cells[member]?.[t] ?? override.cells[TOTAL]?.[t];
+      return pinned !== null && pinned !== undefined;
+    }
+    return true;
   }
 
   function rollupMembers(variable: Variable, t: number): number {
@@ -111,8 +140,13 @@ export function evaluate(model: Model, scenarioId?: string): Evaluation {
     stack.add(cell);
     let out: number;
     try {
+      const override = overrides.get(variableId);
       if (variable.dimensionId && member === TOTAL) {
         out = rollupMembers(variable, t);
+      } else if (override?.kind === "FORMULA") {
+        // A formula override replaces the variable's own, which is how §4 lets a scenario
+        // change the *shape* of a calculation and not only its inputs.
+        out = evalNode(override.formula, member, t);
       } else if (variable.kind === "FORMULA" && variable.formula) {
         out = evalNode(variable.formula, member, t);
       } else {
@@ -336,5 +370,5 @@ export function evaluate(model: Model, scenarioId?: string): Evaluation {
     return out;
   }
 
-  return { series, valueAt, errors };
+  return { series, valueAt, isOverridden, errors };
 }

@@ -1,5 +1,7 @@
 import type { Prisma, PrismaClient } from "@/lib/generated/prisma/client";
 
+import { OverrideSchema } from "./scenario";
+
 import type { ValidationContext } from "./validate";
 
 import { TOTAL } from "./types";
@@ -247,10 +249,11 @@ export async function writeModel(db: PrismaClient, model: Model, slug: string): 
           modelId: created.id,
           name: scenario.name,
           isBase: scenario.isBase,
+          parentId: scenario.parentId ?? null,
           overrides: {
             create: scenario.overrides.map((override) => ({
               variableId: override.variableId,
-              value: { scale: override.scale },
+              value: override.value,
             })),
           },
         },
@@ -418,9 +421,13 @@ export async function readModel(
     id: scenario.id,
     name: scenario.name,
     isBase: scenario.isBase,
+    ...(scenario.parentId ? { parentId: scenario.parentId } : {}),
     overrides: scenario.overrides.map((override) => ({
       variableId: override.variableId,
-      scale: (override.value as { scale: number }).scale,
+      // Parsed, not cast. `jsonb` has no shape Postgres will enforce, so a row written by an
+      // older build would otherwise be read as `undefined` deep inside the evaluator and
+      // quietly become a zero — a wrong number nobody can trace. This fails at the read.
+      value: OverrideSchema.parse(override.value),
     })),
   }));
 

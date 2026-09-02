@@ -236,6 +236,10 @@ enum CommandType {
   SetFormula
   InsertVariable
   RemoveVariable
+  CreateScenario
+  RenameScenario
+  DeleteScenario
+  SetOverride
 }
 
 model Model {

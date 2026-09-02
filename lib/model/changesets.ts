@@ -3,6 +3,7 @@ import type { Prisma } from "@/lib/generated/prisma/client";
 import type { Command } from "./commands";
 import { applyCommandToDb } from "./commands-db";
 import { periodsBetween, readModel, rebuildFormula } from "./persist";
+import { OverrideSchema } from "./scenario";
 import { TOTAL } from "./types";
 
 /**
@@ -398,6 +399,55 @@ export async function inverseFromDb(
 
     case "InsertVariable":
       return { type: "RemoveVariable", variableId: command.variable.id };
+
+    case "CreateScenario":
+      return { type: "DeleteScenario", scenarioId: command.scenario.id };
+
+    case "RenameScenario": {
+      const scenario = await tx.scenario.findFirstOrThrow({
+        where: { id: command.scenarioId, modelId },
+        select: { name: true },
+      });
+      return { type: "RenameScenario", scenarioId: command.scenarioId, name: scenario.name };
+    }
+
+    case "DeleteScenario": {
+      const scenario = await tx.scenario.findFirstOrThrow({
+        where: { id: command.scenarioId, modelId },
+        include: { overrides: { select: { variableId: true, value: true } } },
+      });
+      return {
+        type: "CreateScenario",
+        scenario: {
+          id: scenario.id,
+          name: scenario.name,
+          isBase: scenario.isBase,
+          ...(scenario.parentId ? { parentId: scenario.parentId } : {}),
+          overrides: scenario.overrides.map((override) => ({
+            variableId: override.variableId,
+            value: OverrideSchema.parse(override.value),
+          })),
+        },
+      };
+    }
+
+    case "SetOverride": {
+      const existing = await tx.scenarioOverride.findUnique({
+        where: {
+          scenarioId_variableId: {
+            scenarioId: command.scenarioId,
+            variableId: command.variableId,
+          },
+        },
+        select: { value: true },
+      });
+      return {
+        type: "SetOverride",
+        scenarioId: command.scenarioId,
+        variableId: command.variableId,
+        value: existing ? OverrideSchema.parse(existing.value) : null,
+      };
+    }
 
     case "RemoveVariable": {
       const variable = await tx.variable.findFirstOrThrow({

@@ -390,9 +390,9 @@ export function buildRevenueModel(): Model {
         // Overlays, not copies (§4): three rows differ, everything else falls
         // through to base, so fixing the base case fixes every scenario.
         overrides: [
-          { variableId: V.newAccounts, scale: 1.28 },
-          { variableId: V.churnRate, scale: 0.72 },
-          { variableId: V.expansionRate, scale: 1.18 },
+          { variableId: V.newAccounts, value: { kind: "SCALE", factor: 1.28 } },
+          { variableId: V.churnRate, value: { kind: "SCALE", factor: 0.72 } },
+          { variableId: V.expansionRate, value: { kind: "SCALE", factor: 1.18 } },
         ],
       },
       {
@@ -400,9 +400,9 @@ export function buildRevenueModel(): Model {
         name: "Downside",
         isBase: false,
         overrides: [
-          { variableId: V.newAccounts, scale: 0.72 },
-          { variableId: V.churnRate, scale: 1.55 },
-          { variableId: V.expansionRate, scale: 0.82 },
+          { variableId: V.newAccounts, value: { kind: "SCALE", factor: 0.72 } },
+          { variableId: V.churnRate, value: { kind: "SCALE", factor: 1.55 } },
+          { variableId: V.expansionRate, value: { kind: "SCALE", factor: 0.82 } },
         ],
       },
     ],

@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { FUNCTION_NAMES, OPERATORS } from "./primitives";
+import { OverrideSchema } from "./scenario";
 import type { BinaryOp, FormulaFn } from "./types";
 
 /**
@@ -62,6 +63,16 @@ const VariableSchema = z.object({
   note: z.string().optional(),
 });
 
+const ScenarioSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1).max(120),
+  isBase: z.boolean(),
+  parentId: z.string().optional(),
+  overrides: z.array(
+    z.object({ variableId: z.string().min(1), value: OverrideSchema }),
+  ),
+});
+
 export const CommandSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("SetInput"),
@@ -91,5 +102,26 @@ export const CommandSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("RemoveVariable"),
     variableId: z.string().min(1),
+  }),
+
+  /* ── Scenarios (M4.1) ─────────────────────────────────────────────────*/
+  z.object({
+    type: z.literal("CreateScenario"),
+    scenario: ScenarioSchema,
+  }),
+  z.object({
+    type: z.literal("RenameScenario"),
+    scenarioId: z.string().min(1),
+    name: z.string().min(1).max(120),
+  }),
+  z.object({
+    type: z.literal("DeleteScenario"),
+    scenarioId: z.string().min(1),
+  }),
+  z.object({
+    type: z.literal("SetOverride"),
+    scenarioId: z.string().min(1),
+    variableId: z.string().min(1),
+    value: OverrideSchema.nullable(),
   }),
 ]);
