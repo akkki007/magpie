@@ -41,7 +41,7 @@ export type ChangeKind = "EDIT" | "UNDO" | "REDO" | "ROLLBACK";
 /** What the history panel renders. Dates are ISO so this crosses to the client. */
 export type HistoryEntry = {
   id: string;
-  seq: number;
+  seq: number | null;
   kind: ChangeKind;
   origin: "USER" | "AGENT" | "SYNC";
   label: string;
@@ -66,7 +66,9 @@ export type HistoryEntry = {
  * their inverses — undoing one is the same operation as undoing anything else.
  */
 export function historyStacks(entries: HistoryEntry[]) {
-  const ascending = [...entries].sort((a, b) => a.seq - b.seq);
+  // `readHistory` already excludes anything without a seq (a pending proposal), so this
+  // filter exists to satisfy the type, not to change behaviour.
+  const ascending = [...entries].filter((e) => e.seq !== null).sort((a, b) => a.seq! - b.seq!);
   const undo: string[] = [];
   const redo: string[] = [];
 
@@ -108,7 +110,11 @@ export async function readHistory(
   limit = 200,
 ): Promise<HistoryEntry[]> {
   const rows = await tx.changeSet.findMany({
-    where: { modelId },
+    // `seq: not null` is load-bearing, not a filter of convenience. A PROPOSED changeset
+    // has no seq because nothing has been applied yet; Postgres sorts NULL first on a
+    // DESC order, so without this a pending proposal would appear at the very top of the
+    // log and `historyStacks` would try to undo a command that was never run.
+    where: { modelId, seq: { not: null } },
     orderBy: { seq: "desc" },
     take: limit,
     select: {
@@ -148,8 +154,10 @@ export async function readHistory(
  * a log whose whole value is its order.
  */
 async function nextSeq(tx: Tx, modelId: string) {
+  // Same NULLS-FIRST trap as `readHistory`: without the filter, a PROPOSED changeset's
+  // null seq would sort ahead of every real one and this would hand out 1 forever.
   const top = await tx.changeSet.findFirst({
-    where: { modelId },
+    where: { modelId, seq: { not: null } },
     orderBy: { seq: "desc" },
     select: { seq: true },
   });
@@ -220,6 +228,114 @@ export async function commandsOf(tx: Tx, changeSetId: string) {
     command: row.payload as unknown as Command,
     inverse: row.inverse as unknown as Command,
   }));
+}
+
+/* ── Proposals (§1.4, M5.3) ────────────────────────────────────────────────*/
+
+/**
+ * Stage a batch of commands without applying them.
+ *
+ * §1.4: "an agent run produces a ChangeSet of commands with status PROPOSED... nothing an
+ * LLM does mutates a model directly." So this writes the ChangeSet and its Command rows —
+ * `payload` only, `inverse: null`, since nothing has happened yet for there to be an
+ * inverse of — and takes no `seq`, which is what keeps it out of the ordered log until
+ * `acceptProposal` gives it one.
+ */
+export async function proposeChangeSet(
+  tx: Tx,
+  args: { id: string; modelId: string; label: string; actor: Actor; commands: Command[] },
+): Promise<void> {
+  await tx.changeSet.create({
+    data: {
+      id: args.id,
+      modelId: args.modelId,
+      seq: null,
+      kind: "EDIT",
+      origin: "AGENT",
+      status: "PROPOSED",
+      label: args.label,
+      actorId: args.actor.id,
+      actorName: args.actor.name,
+      commands: {
+        create: args.commands.map((command, order) => ({
+          order,
+          type: command.type,
+          payload: command as unknown as Prisma.InputJsonValue,
+        })),
+      },
+    },
+  });
+}
+
+export type Proposal = {
+  id: string;
+  label: string;
+  actorName: string;
+  createdAt: string;
+  commands: Command[];
+};
+
+export async function readProposal(tx: Tx, modelId: string, id: string): Promise<Proposal | null> {
+  const row = await tx.changeSet.findFirst({
+    where: { id, modelId, status: "PROPOSED" },
+    include: { commands: { orderBy: { order: "asc" }, select: { payload: true } } },
+  });
+  if (!row) return null;
+  return {
+    id: row.id,
+    label: row.label,
+    actorName: row.actorName,
+    createdAt: row.createdAt.toISOString(),
+    commands: row.commands.map((c) => c.payload as unknown as Command),
+  };
+}
+
+/**
+ * Accept a proposal: apply its commands for real, and give it a seq.
+ *
+ * Inverses are computed **now**, against whatever the model actually looks like at accept
+ * time — not reused from anything computed when the proposal was made. The model may have
+ * moved in between (someone typed a cell while the ghost overlay sat on screen), and an
+ * inverse computed against a stale "before" would undo to a state that never existed.
+ *
+ * Validation runs here too, for the same reason `applyCommandToDb` distinguishes intent from
+ * replay: a proposal is intent the moment a human says yes to it, and §5's rule that nothing
+ * which fails to compile may land applies right up to this line.
+ */
+export async function acceptProposal(
+  tx: Tx,
+  args: { id: string; modelId: string },
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const proposal = await tx.changeSet.findFirst({
+    where: { id: args.id, modelId: args.modelId, status: "PROPOSED" },
+    include: { commands: { orderBy: { order: "asc" } } },
+  });
+  if (!proposal) return { ok: false, error: "That proposal is no longer pending." };
+
+  for (const row of proposal.commands) {
+    const command = row.payload as unknown as Command;
+    const inverse = await inverseFromDb(tx, args.modelId, command);
+    await applyCommandToDb(tx, args.modelId, command, { validate: true });
+    await tx.command.update({
+      where: { id: row.id },
+      data: { inverse: inverse as unknown as Prisma.InputJsonValue },
+    });
+  }
+
+  await tx.changeSet.update({
+    where: { id: args.id },
+    data: { status: "ACCEPTED", seq: await nextSeq(tx, args.modelId) },
+  });
+  return { ok: true };
+}
+
+/** Reject a proposal: nothing to undo, because nothing was ever applied. */
+export async function rejectProposal(tx: Tx, args: { id: string; modelId: string }): Promise<void> {
+  const { count } = await tx.changeSet.updateMany({
+    where: { id: args.id, modelId: args.modelId, status: "PROPOSED" },
+    data: { status: "REJECTED" },
+  });
+  if (count === 0) throw new Error("That proposal is no longer pending.");
 }
 
 /* ── Versions and rollback (M3.3) ─────────────────────────────────────────*/

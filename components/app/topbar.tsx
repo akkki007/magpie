@@ -16,6 +16,7 @@ export function Topbar({
   object,
   meta,
   history,
+  agent,
 }: {
   workspace: string;
   object: string;
@@ -27,6 +28,8 @@ export function Topbar({
    * nothing about models, and the panel needs to be a client one.
    */
   history?: React.ReactNode;
+  /** The agent panel trigger (§5) — a slot for the same reason `history` is one. */
+  agent?: React.ReactNode;
 }) {
   return (
     <header className="flex h-[52px] shrink-0 items-center gap-2 border-b border-line px-4">
@@ -53,6 +56,7 @@ export function Topbar({
         >
           Share
         </button>
+        {agent}
         {history}
         {(
           [

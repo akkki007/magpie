@@ -19,13 +19,17 @@
  */
 import { db } from "../lib/db";
 import {
+  acceptProposal,
   changesSince,
   commandsOf,
-  rollback,
   historyStacks,
   inverseFromDb,
+  proposeChangeSet,
   readHistory,
+  readProposal,
   recordChangeSet,
+  rejectProposal,
+  rollback,
 } from "../lib/model/changesets";
 import { applyCommand, labelFor, type Command } from "../lib/model/commands";
 import { applyCommandToDb } from "../lib/model/commands-db";
@@ -205,7 +209,7 @@ console.log("\nThe log");
 
   let entries = await db.$transaction((tx) => readHistory(tx, modelId));
   check("three edits, three changesets", entries.length === 3, `${entries.length}`);
-  check("seq is 1, 2, 3", same([...entries].map((e) => e.seq).sort((x, y) => x - y), [1, 2, 3]));
+  check("seq is 1, 2, 3", same([...entries].map((e) => e.seq).sort((x, y) => (x ?? 0) - (y ?? 0)), [1, 2, 3]));
   check("the actor is recorded", entries.every((e) => e.actorName === "history-check"));
   check("labels come from labelFor", entries.some((e) => e.label === "Rename variable"));
 
@@ -521,7 +525,89 @@ console.log("\nForecast presets");
   );
 }
 
-/* ── 7. Versions and rollback (M3.3) ─────────────────────────────────────*/
+/* ── 7. Proposals (§1.4, M5.3) ────────────────────────────────────────────*/
+
+console.log("\nProposals");
+{
+  await writeModel(db, FIXTURE, SLUG);
+  const proposalId = crypto.randomUUID();
+
+  await db.$transaction((tx) =>
+    proposeChangeSet(tx, {
+      id: proposalId,
+      modelId,
+      label: "Set units to 500 and rename",
+      actor: ACTOR,
+      commands: [
+        { type: "SetInput", variableId: "hc_units", member: TOTAL, period: 0, value: 500 },
+        { type: "RenameVariable", variableId: "hc_units", name: "Volume" },
+      ],
+    }),
+  );
+
+  check("nothing changed yet", (await load()).variables.find((v) => v.id === "hc_units")?.name === "Units");
+
+  let log = await db.$transaction((tx) => readHistory(tx, modelId));
+  check("a pending proposal does not appear in the ordered log", log.length === 0, `${log.length}`);
+
+  await edit({ type: "SetInput", variableId: "hc_price", member: TOTAL, period: 0, value: 42 });
+  check("a real edit still gets seq 1 — the pending proposal took no slot", (await db.$transaction((tx) => readHistory(tx, modelId)))[0]?.seq === 1);
+
+  const read = await db.$transaction((tx) => readProposal(tx, modelId, proposalId));
+  check("the proposal reads back with its commands", read?.commands.length === 2, `${read?.commands.length}`);
+
+  const accepted = await db.$transaction((tx) =>
+    acceptProposal(tx, { id: proposalId, modelId }),
+  );
+  check("accepting reported success", accepted.ok, accepted.ok ? "" : accepted.error);
+  check(
+    "accepting actually applies both commands",
+    (await load()).variables.find((v) => v.id === "hc_units")?.name === "Volume" &&
+      (await load()).inputs.hc_units[TOTAL][0] === 500,
+  );
+
+  log = await db.$transaction((tx) => readHistory(tx, modelId));
+  check("the accepted proposal now has a seq and is in the log", log.length === 2, `${log.length}`);
+  check("it took the next slot rather than the one it would have had if proposed = applied", log.some((e) => e.seq === 2));
+
+  const stored = await db.$transaction((tx) => commandsOf(tx, proposalId));
+  check(
+    "its inverses were computed at accept time, not left null",
+    stored.every((c) => c.inverse !== null && c.inverse !== undefined),
+  );
+  check(
+    "the rename inverse reflects the name at accept time",
+    (stored[1].inverse as { name: string }).name === "Units",
+    JSON.stringify(stored[1].inverse),
+  );
+
+  const stacks = historyStacks(log);
+  check("an accepted proposal can be undone like any other changeset", stacks.undo.at(-1) === proposalId);
+
+  // Reject: a second proposal that never touches the model.
+  const rejectedId = crypto.randomUUID();
+  await db.$transaction((tx) =>
+    proposeChangeSet(tx, {
+      id: rejectedId,
+      modelId,
+      label: "A proposal nobody wants",
+      actor: ACTOR,
+      commands: [{ type: "RemoveVariable", variableId: "hc_sales" }],
+    }),
+  );
+  await db.$transaction((tx) => rejectProposal(tx, { id: rejectedId, modelId }));
+  check(
+    "rejecting leaves the model untouched",
+    (await load()).variables.some((v) => v.id === "hc_sales"),
+  );
+  log = await db.$transaction((tx) => readHistory(tx, modelId));
+  check("a rejected proposal never enters the ordered log", log.length === 2, `${log.length}`);
+
+  const acceptTwice = await db.$transaction((tx) => acceptProposal(tx, { id: proposalId, modelId }));
+  check("accepting an already-accepted proposal is refused, not reapplied", !acceptTwice.ok);
+}
+
+/* ── 8. Versions and rollback (M3.3) ─────────────────────────────────────*/
 
 console.log("\nRollback");
 {

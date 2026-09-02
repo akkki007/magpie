@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 
+import { AgentPanel } from "@/components/modelling/agent-panel";
 import {
   Grid,
   GRID_GEOMETRY,
@@ -9,10 +10,12 @@ import {
   type GridApi,
   type Selection,
 } from "@/components/modelling/grid";
+import { HistoryPanel } from "@/components/modelling/history-panel";
 import { flattenRows, isSelectable, type GridRow } from "@/components/modelling/rows";
 import { Toolbar, type ViewOptions } from "@/components/modelling/toolbar";
 import { toast } from "@/components/ui/toast";
-import { persistCommands, redoModel, undoModel } from "@/app/(app)/models/actions";
+import { Topbar } from "@/components/app/topbar";
+import { persistCommands, redoModel, undoModel, type AgentProposal } from "@/app/(app)/models/actions";
 import { applyAll, type Command } from "@/lib/model/commands";
 import { evaluate } from "@/lib/model/engine";
 import { dependentsOf } from "@/lib/model/formula";
@@ -96,7 +99,15 @@ function historyReducer(state: HistoryState, action: HistoryAction): HistoryStat
   }
 }
 
-export function Workbench({ initialModel, slug }: { initialModel: Model; slug: string }) {
+export function Workbench({
+  initialModel,
+  slug,
+  modelName,
+}: {
+  initialModel: Model;
+  slug: string;
+  modelName: string;
+}) {
   const [history, dispatch] = useReducer(historyReducer, {
     model: initialModel,
     undo: [],
@@ -124,6 +135,9 @@ export function Workbench({ initialModel, slug }: { initialModel: Model; slug: s
   const [renaming, setRenaming] = useState<string | null>(null);
   /** The variable whose formula panel is open (M2.2) — at most one. */
   const [formulaEditing, setFormulaEditing] = useState<string | null>(null);
+  /** A pending proposal from the agent (§5, M5.3), previewed through the same
+   *  `compare` mechanism M4.3 built — see the note by `compare` below. */
+  const [proposal, setProposal] = useState<AgentProposal | null>(null);
   const [adding, setAdding] = useState<string | null>(null);
 
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -141,11 +155,20 @@ export function Workbench({ initialModel, slug }: { initialModel: Model; slug: s
    * arithmetic on the base result that gets you there.
    */
   const compare = useMemo(() => {
+    // A pending proposal takes over the compare slot while it is being reviewed. §1.4
+    // asks for the proposed values rendered "as a ghost overlay beside current ones",
+    // and the delta-under-every-number M4.3 already built *is* that overlay — reusing it
+    // means the accept/reject decision is made against the same reading the user already
+    // knows how to interpret, instead of a second visual language for the same idea.
+    if (proposal) {
+      const draft = applyAll(model, proposal.commands).model;
+      return { name: `Proposed: ${proposal.label}`, evaluation: evaluate(draft, scenarioId) };
+    }
     if (!view.compare || view.compare === scenarioId) return null;
     const scenario = model.scenarios.find((s) => s.id === view.compare);
     if (!scenario) return null;
     return { name: scenario.name, evaluation: evaluate(model, scenario.id) };
-  }, [model, scenarioId, view.compare]);
+  }, [model, proposal, scenarioId, view.compare]);
   const buckets = useMemo(() => bucketsFor(model.periods, view.grain), [model.periods, view.grain]);
   const rows = useMemo(
     () => flattenRows(model, { collapsedGroups, expandedVariables, query }),
@@ -737,6 +760,14 @@ export function Workbench({ initialModel, slug }: { initialModel: Model; slug: s
 
   return (
     <>
+      <Topbar
+        workspace="Models"
+        object={modelName}
+        meta="Saved to Postgres"
+        agent={<AgentPanel slug={slug} onProposalChange={setProposal} />}
+        history={<HistoryPanel slug={slug} />}
+      />
+
       <Toolbar
         query={query}
         onQueryChange={setQuery}

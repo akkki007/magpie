@@ -5,12 +5,14 @@ import { z } from "zod";
 import type { Prisma } from "@/lib/generated/prisma/client";
 import { db } from "@/lib/db";
 import {
+  acceptProposal,
   commandsOf,
   historyStacks,
   inverseFromDb,
   readHistory,
   readVersions,
   recordChangeSet,
+  rejectProposal,
   rollback,
   type HistoryEntry,
   type VersionEntry,
@@ -19,6 +21,8 @@ import { CommandSchema } from "@/lib/model/command-schema";
 import { labelFor, type Command } from "@/lib/model/commands";
 import { applyCommandToDb } from "@/lib/model/commands-db";
 import { readModel } from "@/lib/model/persist";
+import { runAgent as runOpenAiAgent, type AgentStep } from "@/lib/model/openai-agent";
+import { proposeChangeSet } from "@/lib/model/changesets";
 import { getSession } from "@/lib/session";
 
 /**
@@ -302,3 +306,106 @@ export async function rollbackTo(
     return { ok: true };
   });
 }
+
+
+/**
+ * Accept a pending proposal (§1.4, M5.3): apply its commands for real.
+ *
+ * `rollback`'s error-vs-throw distinction applies here too — `acceptProposal` returns a
+ * `{ok:false}` for an ordinary "someone already acted on this" race, which `withModel`
+ * would otherwise happily wrap as `{ok:true}` because it never throws. Returned, not
+ * thrown, means the transaction still commits nothing, which is correct either way: there
+ * is nothing to roll back from a proposal whose commands were never applied.
+ */
+export async function acceptModelProposal(slug: string, proposalId: unknown): Promise<Result> {
+  const id = z.uuid().safeParse(proposalId);
+  if (!id.success) return { ok: false, error: "That proposal id was not valid." };
+
+  return withModel(slug, (tx, modelId) => acceptProposal(tx, { id: id.data, modelId }));
+}
+
+export async function rejectModelProposal(slug: string, proposalId: unknown): Promise<Result> {
+  const id = z.uuid().safeParse(proposalId);
+  if (!id.success) return { ok: false, error: "That proposal id was not valid." };
+
+  return withModel(slug, async (tx, modelId) => {
+    await rejectProposal(tx, { id: id.data, modelId });
+    return { ok: true };
+  });
+}
+
+
+/**
+ * Ask the agent (§5, M5.2, M5.4).
+ *
+ * The run itself is read-only against Postgres — everything it looks at comes from the
+ * `Model` already loaded for the page, not from a fresh query, so a long-running call
+ * cannot see a half-written state. Only the very end writes: an `AgentRun` row so a
+ * refresh does not lose the transcript, and — only if the model actually proposed
+ * something grounded — a `ChangeSet` with status `PROPOSED` that has not touched the
+ * model at all. §1.4 again: nothing an LLM does mutates a model directly.
+ */
+export type AgentProposal = { id: string; label: string; commands: Command[] };
+
+export async function askAgent(
+  slug: string,
+  prompt: unknown,
+): Promise<Result<{ answer: string | null; proposal: AgentProposal | null }>> {
+  const text = z.string().trim().min(1).max(2000).safeParse(prompt);
+  if (!text.success) return { ok: false, error: "Ask it something first." };
+
+  const who = await actor();
+  if (!who) return { ok: false, error: "Your session has expired — sign in again." };
+
+  const model = await readModel(db, slug);
+  if (!model) return { ok: false, error: `No model at ${slug}.` };
+
+  let result: Awaited<ReturnType<typeof runOpenAiAgent>>;
+  try {
+    result = await runOpenAiAgent(model, text.data);
+  } catch (error) {
+    console.error("[askAgent]", error);
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : "The agent could not be reached.",
+    };
+  }
+
+  const proposalId = result.proposal?.ok ? crypto.randomUUID() : null;
+
+  await withModel(slug, async (tx, modelId) => {
+    if (proposalId && result.proposal?.ok) {
+      await proposeChangeSet(tx, {
+        id: proposalId,
+        modelId,
+        label: result.proposal.label,
+        actor: who,
+        commands: result.proposal.commands,
+      });
+    }
+
+    await tx.agentRun.create({
+      data: {
+        modelId,
+        prompt: text.data,
+        steps: result.steps as unknown as Prisma.InputJsonValue,
+        answer: result.answer,
+        changeSetId: proposalId,
+        actorId: who.id,
+        actorName: who.name,
+      },
+    });
+    return { ok: true };
+  });
+
+  return {
+    ok: true,
+    answer: result.answer,
+    proposal:
+      proposalId && result.proposal?.ok
+        ? { id: proposalId, label: result.proposal.label, commands: result.proposal.commands }
+        : null,
+  };
+}
+
+export type { AgentStep };
