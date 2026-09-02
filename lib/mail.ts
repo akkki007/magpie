@@ -31,6 +31,14 @@ function transporter() {
 
   // Reused across hot reloads for the same reason as the Prisma client: a new
   // transport per reload means a new pool of SMTP connections per save.
+  //
+  // Tried `pool: true` here to cut the ~3.5s a fresh Gmail connection costs on every send —
+  // it measurably hangs indefinitely under Bun instead (nodemailer's `SMTPPool` against a
+  // real Gmail server, confirmed by a script that never returned). Reverted rather than
+  // shipped: a send that reliably takes 3.5 seconds beats one that sometimes never
+  // completes. Left as a plain, unpooled connection until this is worth a real
+  // investigation or, better, a transactional email API that answers over HTTP instead of
+  // raw SMTP.
   globalForMail.mailer ??= nodemailer.createTransport({
     host: "smtp.gmail.com",
     // 465 is implicit TLS — encrypted from the first byte, rather than 587's
