@@ -270,7 +270,7 @@ model Model {
   scenarios      Scenario[]
   changeSets     ChangeSet[]
   versions       ModelVersion[]
-  agentChat      AgentChat?
+  agentChats     AgentChat[]
   comments       Comment[]
 
   @@unique([slug])
@@ -541,29 +541,35 @@ model Comment {
   @@map("comment")
 }
 
-/// A run of the agent (§5, M5.4): the prompt, its tool calls, and the changeset it
-/// proposed, if any — a question with no changes ("what would 30% growth do?" answered
-/// without touching the model) has none. Persisted so a refresh does not lose the run,
-/// which the plan calls out by name as the point of this table.
-/// The agent's chat transcript for one model (§5, M5.4 — superseding AgentRun).
+/// One agent conversation (§5, M5.4 — superseding AgentRun; widened from one row per model
+/// to many, for a ChatGPT-style history sidebar).
 ///
-/// One row per model, holding the whole `UIMessage[]` array `useChat` renders. That is a
-/// wider claim than AgentRun's "steps taken this turn": it is the exact conversation state
-/// the AI SDK's chat UI needs to rehydrate after a refresh, tool-call states and pending
-/// approvals included, rather than a summary reconstructed from a narrower log. A pending
-/// proposal a user has not yet accepted or rejected is real state — losing it on reload
-/// would be losing work, the same way M5.4 named "a refresh does not lose the run" as the
-/// point of persisting anything at all.
+/// `messages` holds the whole `UIMessage[]` array `useChat` renders — tool-call states and
+/// a pending proposal included, not a summary of them, which is what "a refresh does not
+/// lose the run" actually asked for.
 ///
-/// Single row per model rather than per user: the panel has always shown one running
-/// thread to whoever has the model open, not a private conversation each person restarts.
+/// Scoped to `(modelId, actorId)`: unlike Comments or the History panel, which show one
+/// shared record to whoever has the model open, a chat thread is somebody's own line of
+/// questioning and belongs in their own list, the way ChatGPT's history is per account and
+/// not a shared thread everyone appends to. `actorId` is nullable to match every other actor
+/// column in this schema (a deleted user must not take their history down with them), but a
+/// null-actor chat is orphaned — nothing lists it — which is an acceptable loss next to
+/// resurrecting a deleted account's identity.
 model AgentChat {
-  modelId   String   @id
+  id        String   @id @default(uuid())
+  modelId   String
+  actorId   String?
+  /// The opening question, trimmed — set once, from the first user message, and never
+  /// touched again. Deriving it is the same "don't make someone name a folder" reasoning
+  /// M4.1 already gave for how a new scenario gets its name.
+  title     String
   messages  Json
+  createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   model Model @relation(fields: [modelId], references: [id], onDelete: Cascade)
 
+  @@index([modelId, actorId, updatedAt])
   @@map("agent_chat")
 }
 

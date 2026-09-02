@@ -316,6 +316,36 @@ export async function rollbackTo(
  * thrown, means the transaction still commits nothing, which is correct either way: there
  * is nothing to roll back from a proposal whose commands were never applied.
  */
+/**
+ * Where a batch of proposals actually stand, right now (§1.4).
+ *
+ * The chat transcript is not this source of truth — a `tool-proposeChanges` message part
+ * says what was proposed and never changes again once the tool has run, so a proposal card
+ * rendered straight from message history looks pending forever, even long after it was
+ * accepted or rejected in a different tab, a previous session, or a moment ago in this one.
+ * This is the reconciliation: read `ChangeSet.status` for the ids actually referenced in the
+ * conversation, and let that — not anything remembered client-side — decide whether a card
+ * still offers Accept/Reject.
+ */
+export async function readProposalStatuses(
+  slug: string,
+  proposalIds: unknown,
+): Promise<Result<{ statuses: Record<string, "PROPOSED" | "ACCEPTED" | "REJECTED">; }>> {
+  const ids = z.array(z.uuid()).max(200).safeParse(proposalIds);
+  if (!ids.success) return { ok: false, error: "Those proposal ids were not valid." };
+  if (ids.data.length === 0) return { ok: true, statuses: {} };
+
+  return withModel(slug, async (tx, modelId) => {
+    const rows = await tx.changeSet.findMany({
+      where: { id: { in: ids.data }, modelId },
+      select: { id: true, status: true },
+    });
+    const statuses: Record<string, "PROPOSED" | "ACCEPTED" | "REJECTED"> = {};
+    for (const row of rows) if (row.status) statuses[row.id] = row.status;
+    return { ok: true, statuses };
+  });
+}
+
 export async function acceptModelProposal(slug: string, proposalId: unknown): Promise<Result> {
   const id = z.uuid().safeParse(proposalId);
   if (!id.success) return { ok: false, error: "That proposal id was not valid." };
@@ -335,17 +365,48 @@ export async function rejectModelProposal(slug: string, proposalId: unknown): Pr
 
 
 /**
- * The agent's chat, as one persisted transcript per model (§5, M5.4).
+ * The agent's chat history (§5, M5.4), read from the client — a ChatGPT-style sidebar over
+ * `AgentChat` rows.
  *
  * The route handler (`app/(app)/models/[slug]/agent/route.ts`) is what actually talks to
- * the model — this is only the two reads and the one write its `useChat` transport needs
- * to survive a refresh. Read here rather than in the route so the page can hydrate
- * `useChat`'s `messages` before the panel opens, the same way `readModel` hydrates the grid.
+ * the model and is what creates and updates a chat row; everything here only reads, plus
+ * one delete for tidying up. A chat is scoped to `(modelId, actorId)` — see the schema
+ * comment on `AgentChat` for why this list is per person and not shared like Comments or
+ * the History panel.
  */
-export async function readAgentChat(slug: string): Promise<Result<{ messages: unknown[] }>> {
-  return withModel(slug, async (tx, modelId) => {
-    const row = await tx.agentChat.findUnique({ where: { modelId }, select: { messages: true } });
+export type AgentChatSummary = { id: string; title: string; updatedAt: string };
+
+export async function listAgentChats(slug: string): Promise<Result<{ chats: AgentChatSummary[] }>> {
+  return withModel(slug, async (tx, modelId, who) => {
+    const rows = await tx.agentChat.findMany({
+      where: { modelId, actorId: who.id },
+      orderBy: { updatedAt: "desc" },
+      select: { id: true, title: true, updatedAt: true },
+    });
+    return { ok: true, chats: rows.map((r) => ({ ...r, updatedAt: r.updatedAt.toISOString() })) };
+  });
+}
+
+export async function readAgentChat(slug: string, chatId: unknown): Promise<Result<{ messages: unknown[] }>> {
+  const id = z.uuid().safeParse(chatId);
+  if (!id.success) return { ok: true, messages: [] };
+
+  return withModel(slug, async (tx, modelId, who) => {
+    const row = await tx.agentChat.findFirst({
+      where: { id: id.data, modelId, actorId: who.id },
+      select: { messages: true },
+    });
     return { ok: true, messages: (row?.messages as unknown[] | undefined) ?? [] };
+  });
+}
+
+export async function deleteAgentChat(slug: string, chatId: unknown): Promise<Result> {
+  const id = z.uuid().safeParse(chatId);
+  if (!id.success) return { ok: false, error: "That chat id was not valid." };
+
+  return withModel(slug, async (tx, modelId, who) => {
+    await tx.agentChat.deleteMany({ where: { id: id.data, modelId, actorId: who.id } });
+    return { ok: true };
   });
 }
 

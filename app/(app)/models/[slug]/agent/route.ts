@@ -25,12 +25,21 @@ import { getSession } from "@/lib/session";
  * can send it a POST, the same reasoning `models/actions.ts` gives for not trusting a page's
  * upstream check.
  *
- * One chat per model (`AgentChat`, keyed by `modelId`): the whole message history — text,
- * every tool call and its result, any pending approval — is overwritten on every turn's
- * `onFinish`. That is the durability M5.4 asked `AgentRun` for, now carried by the
- * richer, standard shape `useChat` already needs to rehydrate the panel after a refresh.
+ * **Many chats now, not one.** The client sends `{ id, message }` — only the last message,
+ * per the AI SDK's "sending only the last message" pattern — rather than the whole array,
+ * because the whole array already lives here: `id` names an `AgentChat` row this handler
+ * loads, appends to, and writes back. The client mints `id` itself (a fresh uuid for a chat
+ * that does not exist yet), so the first turn of a brand-new conversation and the second
+ * turn of an old one are the same code path — this either creates the row or updates it.
+ *
+ * **Ownership is checked before anything is read.** A chat id is only ever trusted if it is
+ * either absent from the table (a new chat about to be created) or already scoped to this
+ * exact `(modelId, actorId)` — never someone else's history, and never another model's.
  */
-export async function POST(request: Request, { params }: { params: Promise<{ slug: string }> }) {
+export async function POST(
+  request: Request,
+  { params }: { params: Promise<{ slug: string }> },
+) {
   const { slug } = await params;
 
   const session = await getSession();
@@ -42,17 +51,32 @@ export async function POST(request: Request, { params }: { params: Promise<{ slu
   const model = await readModel(db, slug);
   if (!model) return new Response("Not found", { status: 404 });
 
-  const { messages }: { messages: UIMessage[] } = await request.json();
+  const body = (await request.json()) as { id?: string; message?: UIMessage };
+  const chatId = typeof body.id === "string" ? body.id : null;
+  const incoming = body.message;
+  if (!chatId || !incoming) return new Response("Bad request", { status: 400 });
+
+  const actor = { id: session.user.id, name: session.user.name || session.user.email };
+
+  const existing = await db.agentChat.findUnique({
+    where: { id: chatId },
+    select: { modelId: true, actorId: true, messages: true },
+  });
+  // Refuse silently-wrong ownership rather than quietly starting a fresh thread under
+  // someone else's id — a 403 is the honest answer, not a conversation that looks continued
+  // but is not.
+  if (existing && (existing.modelId !== modelRow.id || existing.actorId !== actor.id)) {
+    return new Response("Forbidden", { status: 403 });
+  }
+
+  const previousMessages = (existing?.messages as UIMessage[] | undefined) ?? [];
+  const messages = [...previousMessages, incoming];
 
   const result = streamText({
     model: agentModel(),
     system: SYSTEM_PROMPT,
     messages: await convertToModelMessages(messages),
-    tools: buildAgentTools({
-      model,
-      modelId: modelRow.id,
-      actor: { id: session.user.id, name: session.user.name || session.user.email },
-    }),
+    tools: buildAgentTools({ model, modelId: modelRow.id, actor }),
     // Read, read again, propose: a real turn is several tool calls deep.
     stopWhen: stepCountIs(12),
   });
@@ -66,12 +90,31 @@ export async function POST(request: Request, { params }: { params: Promise<{ slu
     stream: result.toUIMessageStream({
       originalMessages: messages,
       onFinish: async ({ messages: finalMessages }) => {
-        await db.agentChat.upsert({
-          where: { modelId: modelRow.id },
-          create: { modelId: modelRow.id, messages: finalMessages as unknown as Prisma.InputJsonValue },
-          update: { messages: finalMessages as unknown as Prisma.InputJsonValue },
-        });
+        const payload = finalMessages as unknown as Prisma.InputJsonValue;
+        if (existing) {
+          await db.agentChat.update({ where: { id: chatId }, data: { messages: payload } });
+        } else {
+          await db.agentChat.create({
+            data: {
+              id: chatId,
+              modelId: modelRow.id,
+              actorId: actor.id,
+              title: titleFrom(incoming),
+              messages: payload,
+            },
+          });
+        }
       },
     }),
   });
+}
+
+/** The opening question, trimmed to a sidebar-sized label — set once, at creation. */
+export function titleFrom(message: UIMessage): string {
+  const text = message.parts
+    .map((part) => (part.type === "text" ? part.text : ""))
+    .join("")
+    .trim();
+  if (!text) return "New chat";
+  return text.length > 60 ? `${text.slice(0, 60)}…` : text;
 }
