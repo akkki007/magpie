@@ -17,6 +17,7 @@ import {
 } from "@/lib/model/changesets";
 import { CommandSchema } from "@/lib/model/command-schema";
 import { labelFor, type Command } from "@/lib/model/commands";
+import { applyCommandToDb } from "@/lib/model/commands-db";
 import { readModel } from "@/lib/model/persist";
 import { getSession } from "@/lib/session";
 
@@ -78,33 +79,51 @@ async function withModel<T>(
   }
 }
 
-export async function persistCommand(
+/**
+ * One changeset, of one command or several.
+ *
+ * A batch is not a convenience: §1.4's agent proposals are batches by nature, and an
+ * "accept" that lands as six separate changesets is an accept the user cannot undo in one
+ * move. M4.4's presets are the first caller, which is deliberate — the path is exercised by
+ * something deterministic before an agent is pointed at it.
+ */
+export async function persistCommands(
   slug: string,
   changeSetId: unknown,
-  command: unknown,
+  commands: unknown,
+  batchLabel?: unknown,
 ): Promise<Result> {
   const id = Id.safeParse(changeSetId);
-  const parsed = CommandSchema.safeParse(command);
+  const parsed = z.array(CommandSchema).min(1).max(200).safeParse(commands);
   if (!id.success || !parsed.success) {
     // Deliberately not echoed verbatim: a schema path is useful to a developer and noise to a
     // controller, and it describes the shape of an internal type.
-    console.error("[persistCommand] rejected", parsed.error?.issues);
+    console.error("[persistCommands] rejected", parsed.error?.issues);
     return { ok: false, error: "That edit was not in a form the server could accept." };
   }
+  const label = z.string().trim().min(1).max(120).safeParse(batchLabel);
 
   return withModel(slug, async (tx, modelId, who) => {
-    const typed = parsed.data as Command;
-    // Read the "before" state *before* applying, which is the whole reason this is inside
-    // the transaction and not a second call from the client.
-    const inverse = await inverseFromDb(tx, modelId, typed);
+    const typed = parsed.data as Command[];
+
+    // Inverses are read one at a time, *interleaved with* the applies, because a command's
+    // "before" state is whatever the previous command in the batch left behind. Computing
+    // them all up front would invert the batch to the wrong starting point.
+    const applied: { command: Command; inverse: Command }[] = [];
+    for (const command of typed) {
+      const inverse = await inverseFromDb(tx, modelId, command);
+      await applyCommandToDb(tx, modelId, command);
+      applied.push({ command, inverse });
+    }
 
     await recordChangeSet(tx, {
       id: id.data,
       modelId,
       kind: "EDIT",
-      label: labelFor(typed),
+      label: typed.length === 1 ? labelFor(typed[0]) : (label.success ? label.data : "Batch edit"),
       actor: who,
-      commands: [{ command: typed, inverse }],
+      commands: applied,
+      alreadyApplied: true,
     });
     return { ok: true };
   });

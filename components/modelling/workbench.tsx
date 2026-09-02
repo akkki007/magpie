@@ -12,10 +12,11 @@ import {
 import { flattenRows, isSelectable, type GridRow } from "@/components/modelling/rows";
 import { Toolbar, type ViewOptions } from "@/components/modelling/toolbar";
 import { toast } from "@/components/ui/toast";
-import { persistCommand, redoModel, undoModel } from "@/app/(app)/models/actions";
-import { applyCommand, type Command } from "@/lib/model/commands";
+import { persistCommands, redoModel, undoModel } from "@/app/(app)/models/actions";
+import { applyAll, type Command } from "@/lib/model/commands";
 import { evaluate } from "@/lib/model/engine";
 import { dependentsOf } from "@/lib/model/formula";
+import { forecastScenarios } from "@/lib/model/presets";
 import { withCell } from "@/lib/model/scenario";
 import { parseValue, toEditable } from "@/lib/model/format";
 import { AGGREGATION_LABEL, bucketsFor } from "@/lib/model/grain";
@@ -36,13 +37,22 @@ import { TOTAL, type Model, type Variable } from "@/lib/model/types";
 /**
  * One step on the local undo stack.
  *
+ * A step is a *changeset*, so it holds however many commands that changeset carried — one
+ * for a keystroke, several for a preset or an agent proposal. Undo moves them together,
+ * which is the only version of undo that makes sense for a batch: accepting six commands
+ * and taking back one of them is not an operation anybody asked for.
+ *
  * `changeSetId` is the id of the *server* changeset this step corresponds to,
  * generated here so it is known the instant the command is dispatched rather
  * than one round trip later (M3.2). Undo sends it along and the server refuses
  * if that is not what is actually on top of the log — the two stacks are then
  * checked against each other instead of assumed to agree.
  */
-type Step = { command: Command; changeSetId: string };
+type Step = { commands: Command[]; changeSetId: string };
+
+/** How far a best or worst case moves each driver. A round number, and the user's to change
+ *  the moment anyone asks — it is a starting point, not a claim about the business. */
+const FORECAST_SPREAD = 0.15;
 
 type HistoryState = {
   model: Model;
@@ -51,35 +61,37 @@ type HistoryState = {
 };
 
 type HistoryAction =
-  | { type: "run"; command: Command; changeSetId: string }
+  | { type: "run"; commands: Command[]; changeSetId: string }
   | { type: "undo" }
   | { type: "redo" };
 
 function historyReducer(state: HistoryState, action: HistoryAction): HistoryState {
   switch (action.type) {
     case "run": {
-      const { model, inverse } = applyCommand(state.model, action.command);
+      // `applyAll` hands back the inverses already reversed, which is what undoing a batch
+      // needs: the last command applied is the first one taken back.
+      const { model, inverses } = applyAll(state.model, action.commands);
       // A new edit invalidates the redo branch — the usual linear history, and
       // the same rule `historyStacks` applies when it replays the log.
       return {
         model,
-        undo: [{ command: inverse, changeSetId: action.changeSetId }, ...state.undo].slice(0, 100),
+        undo: [{ commands: inverses, changeSetId: action.changeSetId }, ...state.undo].slice(0, 100),
         redo: [],
       };
     }
     case "undo": {
       const [step, ...rest] = state.undo;
       if (!step) return state;
-      const { model, inverse } = applyCommand(state.model, step.command);
+      const { model, inverses } = applyAll(state.model, step.commands);
       // The id travels with the step: it names the EDIT changeset, which is
       // what a later redo has to point back at.
-      return { model, undo: rest, redo: [{ ...step, command: inverse }, ...state.redo] };
+      return { model, undo: rest, redo: [{ ...step, commands: inverses }, ...state.redo] };
     }
     case "redo": {
       const [step, ...rest] = state.redo;
       if (!step) return state;
-      const { model, inverse } = applyCommand(state.model, step.command);
-      return { model, undo: [{ ...step, command: inverse }, ...state.undo], redo: rest };
+      const { model, inverses } = applyAll(state.model, step.commands);
+      return { model, undo: [{ ...step, commands: inverses }, ...state.undo], redo: rest };
     }
   }
 }
@@ -211,17 +223,20 @@ export function Workbench({ initialModel, slug }: { initialModel: Model; slug: s
     [behind],
   );
 
-  const run = useCallback(
-    (command: Command) => {
+  const runAll = useCallback(
+    (commands: Command[], label?: string) => {
+      if (commands.length === 0) return;
       // Generated here, not on the server, so the undo stack can name this
       // changeset immediately (M3.2) — and so a retried request cannot apply
       // the same edit twice, because the id is the primary key.
       const changeSetId = crypto.randomUUID();
-      dispatch({ type: "run", command, changeSetId });
-      send("That edit was not saved", () => persistCommand(slug, changeSetId, command));
+      dispatch({ type: "run", commands, changeSetId });
+      send("That edit was not saved", () => persistCommands(slug, changeSetId, commands, label));
     },
     [send, slug],
   );
+
+  const run = useCallback((command: Command) => runAll([command]), [runAll]);
 
   /**
    * Undo and redo are writes now (M3.2).
@@ -556,6 +571,55 @@ export function Workbench({ initialModel, slug }: { initialModel: Model; slug: s
     return () => document.removeEventListener("keydown", onKey);
   }, [redo, undo]);
 
+  /**
+   * Best and worst case, as two overlays on the base (M4.4).
+   *
+   * One changeset, so a preset arrives and leaves in one undo. It is also the first batch
+   * anything sends — deliberately something deterministic, so §1.4's agent finds the path
+   * already worn in rather than being its first user.
+   */
+  const forecast = useCallback(
+    (targetId: string) => {
+      const objective = model.variables.find((v) => v.id === targetId);
+      if (!objective) return;
+
+      const taken = new Set(model.scenarios.map((s) => s.name.toLowerCase()));
+      const name = (suffix: string) => {
+        const stem = `${objective.name} — ${suffix}`;
+        if (!taken.has(stem.toLowerCase())) return stem;
+        for (let n = 2; ; n++) if (!taken.has(`${stem} ${n}`.toLowerCase())) return `${stem} ${n}`;
+      };
+
+      const { upside, downside, drivers } = forecastScenarios(model, targetId, FORECAST_SPREAD, {
+        upside: name("best"),
+        downside: name("worst"),
+      });
+
+      if (drivers.length === 0) {
+        // Nothing to move. Creating two empty scenarios would look like it worked and read
+        // as identical to base forever after.
+        toast.error(`${objective.name} does not respond to any input`, {
+          description: "There is nothing for a best and worst case to vary.",
+        });
+        return;
+      }
+
+      runAll(
+        [
+          { type: "CreateScenario", scenario: upside },
+          { type: "CreateScenario", scenario: downside },
+        ],
+        `Best and worst case for ${objective.name}`,
+      );
+      setScenarioId(upside.id);
+      setView((current) => ({ ...current, compare: downside.id }));
+      toast.success(`${drivers.length} drivers moved ${Math.round(FORECAST_SPREAD * 100)}%`, {
+        description: `Comparing ${upside.name} against ${downside.name}.`,
+      });
+    },
+    [model, runAll],
+  );
+
   /* ── Grid callbacks ────────────────────────────────────────────────────*/
   const api: GridApi = useMemo(
     () => ({
@@ -575,6 +639,7 @@ export function Workbench({ initialModel, slug }: { initialModel: Model; slug: s
       onToggleVariable: (variableId) =>
         setExpandedVariables((current) => toggled(current, variableId)),
       onTrace: setTrace,
+      onForecast: forecast,
       onFormulaStart: (variableId) => {
         setFormulaEditing(variableId);
         setEditing(null);
@@ -605,7 +670,7 @@ export function Workbench({ initialModel, slug }: { initialModel: Model; slug: s
       onAddStart: setAdding,
       onAddCommit: addVariable,
     }),
-    [addVariable, commitEdit, duplicate, model.variables, remove, run, startEdit],
+    [addVariable, commitEdit, duplicate, forecast, model.variables, remove, run, startEdit],
   );
 
   /* ── Scenarios (M4.1) ──────────────────────────────────────────────────*/

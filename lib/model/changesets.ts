@@ -167,15 +167,23 @@ export async function recordChangeSet(
     actor: Actor;
     /** Applied in order; each is stored with the command that undoes it. */
     commands: { command: Command; inverse: Command }[];
+    /**
+     * Set when the caller has already applied them. A batch has to interleave "read the
+     * inverse" with "apply", because each command's before-state is what the previous one
+     * left behind — so the caller does the loop and this only records it.
+     */
+    alreadyApplied?: boolean;
     /** For UNDO and REDO — the changeset being acted on. */
     targetId?: string;
   },
 ): Promise<void> {
-  for (const { command } of args.commands) {
-    // Only an EDIT carries new intent — see the note on `applyCommandToDb`. An UNDO, REDO or
-    // ROLLBACK replays commands that were validated when they were first written, and
-    // refusing one would mean an undo that sometimes does not work.
-    await applyCommandToDb(tx, args.modelId, command, { validate: args.kind === "EDIT" });
+  if (!args.alreadyApplied) {
+    for (const { command } of args.commands) {
+      // Only an EDIT carries new intent — see the note on `applyCommandToDb`. An UNDO, REDO
+      // or ROLLBACK replays commands that were validated when they were first written, and
+      // refusing one would mean an undo that sometimes does not work.
+      await applyCommandToDb(tx, args.modelId, command, { validate: args.kind === "EDIT" });
+    }
   }
 
   await tx.changeSet.create({

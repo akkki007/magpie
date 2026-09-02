@@ -28,9 +28,11 @@ import {
   recordChangeSet,
 } from "../lib/model/changesets";
 import { applyCommand, labelFor, type Command } from "../lib/model/commands";
+import { applyCommandToDb } from "../lib/model/commands-db";
 import { evaluate } from "../lib/model/engine";
 import { lit, mul, ref } from "../lib/model/formula";
 import { readModel, writeModel } from "../lib/model/persist";
+import { driversFor, forecastScenarios } from "../lib/model/presets";
 import { TOTAL, type Model } from "../lib/model/types";
 
 let failures = 0;
@@ -395,7 +397,131 @@ console.log("\nScenarios as overlays");
   );
 }
 
-/* ── 5. Versions and rollback (M3.3) ─────────────────────────────────────*/
+/* ── 5. A batch changeset (M4.4's write path, §1.4's) ────────────────────*/
+
+console.log("\nBatches");
+{
+  await writeModel(db, FIXTURE, SLUG);
+
+  // Two commands where the second's before-state is what the first left behind. Computing
+  // both inverses up front would invert the batch to the wrong starting point — the second
+  // inverse would say "back to Units" when the value it actually replaced was "Volume".
+  const batch: Command[] = [
+    { type: "RenameVariable", variableId: "hc_units", name: "Volume" },
+    { type: "RenameVariable", variableId: "hc_units", name: "Quantity" },
+  ];
+
+  const id = crypto.randomUUID();
+  await db.$transaction(async (tx) => {
+    const applied: { command: Command; inverse: Command }[] = [];
+    for (const command of batch) {
+      const inverse = await inverseFromDb(tx, modelId, command);
+      await applyCommandToDb(tx, modelId, command);
+      applied.push({ command, inverse });
+    }
+    await recordChangeSet(tx, {
+      id,
+      modelId,
+      kind: "EDIT",
+      label: "Two renames",
+      actor: ACTOR,
+      commands: applied,
+      alreadyApplied: true,
+    });
+  });
+
+  check("the batch applied in order", (await load()).variables.find((v) => v.id === "hc_units")?.name === "Quantity");
+
+  const entries = await db.$transaction((tx) => readHistory(tx, modelId));
+  check("two commands, one changeset", entries.length === 1 && entries[0].commandCount === 2,
+    `${entries.length} changesets, ${entries[0]?.commandCount} commands`);
+
+  const stored = await db.$transaction((tx) => commandsOf(tx, id));
+  check(
+    "the second inverse points at what the first command left, not the original",
+    (stored[1].inverse as { name: string }).name === "Volume",
+    JSON.stringify(stored[1].inverse),
+  );
+
+  // Undoing a batch replays its inverses backwards, which is the only order that lands back
+  // where it started: "back to Volume" then "back to Units".
+  await db.$transaction(async (tx) => {
+    const commands = await commandsOf(tx, id);
+    await recordChangeSet(tx, {
+      id: crypto.randomUUID(),
+      modelId,
+      kind: "UNDO",
+      label: "Undo two renames",
+      actor: ACTOR,
+      targetId: id,
+      commands: [...commands].reverse().map(({ command, inverse }) => ({ command: inverse, inverse: command })),
+    });
+  });
+  check(
+    "undoing the batch returns the original name",
+    (await load()).variables.find((v) => v.id === "hc_units")?.name === "Units",
+    (await load()).variables.find((v) => v.id === "hc_units")?.name,
+  );
+}
+
+/* ── 6. Forecast presets (M4.4) ──────────────────────────────────────────*/
+
+console.log("\nForecast presets");
+{
+  // Against the *real* model, not the fixture: the claim is that direction is worked out
+  // rather than guessed, and only a model with a churn rate in it can test that.
+  const revenue = (await readModel(db, "revenue-model-2026"))!;
+  const closingArr = revenue.variables.find((v) => v.name === "Closing ARR")!;
+  const drivers = driversFor(revenue, closingArr.id);
+
+  check("it found the drivers Closing ARR responds to", drivers.length > 0, `${drivers.length}`);
+  check(
+    "every driver is an input",
+    drivers.every((d) => revenue.variables.find((v) => v.id === d.variableId)?.kind === "INPUT"),
+  );
+
+  const by = (name: string) => drivers.find((d) => d.name === name);
+  check("more new accounts is better", (by("New Accounts")?.sensitivity ?? 0) > 0, JSON.stringify(by("New Accounts")));
+  check("more churn is worse", (by("Gross Churn Rate")?.sensitivity ?? 0) < 0, JSON.stringify(by("Gross Churn Rate")));
+  check("more expansion is better", (by("Expansion Rate")?.sensitivity ?? 0) > 0);
+  check(
+    "an input Closing ARR does not depend on is left out",
+    !by("Collected In Month"),
+    JSON.stringify(by("Collected In Month")),
+  );
+
+  const { upside, downside } = forecastScenarios(revenue, closingArr.id, 0.15, {
+    upside: "Best case",
+    downside: "Worst case",
+  });
+
+  const factorOf = (scenario: typeof upside, name: string) => {
+    const id = drivers.find((d) => d.name === name)?.variableId;
+    const value = scenario.overrides.find((o) => o.variableId === id)?.value;
+    return value?.kind === "SCALE" ? value.factor : NaN;
+  };
+  check("the upside raises new accounts", factorOf(upside, "New Accounts") > 1);
+  check(
+    "the upside LOWERS churn — the whole point of measuring direction",
+    factorOf(upside, "Gross Churn Rate") < 1,
+    `${factorOf(upside, "Gross Churn Rate")}`,
+  );
+  check("the downside does the opposite", factorOf(downside, "Gross Churn Rate") > 1);
+
+  const withBoth = { ...revenue, scenarios: [...revenue.scenarios, upside, downside] };
+  const best = evaluate(withBoth, upside.id).series(closingArr.id).at(-1)!;
+  const worst = evaluate(withBoth, downside.id).series(closingArr.id).at(-1)!;
+  const base = evaluate(revenue, revenue.scenarios.find((s) => s.isBase)!.id)
+    .series(closingArr.id)
+    .at(-1)!;
+  check(
+    "worst < base < best at the horizon",
+    worst < base && base < best,
+    `${Math.round(worst)} / ${Math.round(base)} / ${Math.round(best)}`,
+  );
+}
+
+/* ── 7. Versions and rollback (M3.3) ─────────────────────────────────────*/
 
 console.log("\nRollback");
 {

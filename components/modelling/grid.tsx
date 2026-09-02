@@ -11,6 +11,7 @@ import {
   Plus,
   Sigma,
   Trash2,
+  TrendingUp,
   TriangleAlert,
 } from "lucide-react";
 
@@ -58,6 +59,8 @@ export type GridApi = {
   onToggleGroup: (groupId: string) => void;
   onToggleVariable: (variableId: string) => void;
   onTrace: (variableId: string | null) => void;
+  /** Generate best/worst overlays against this variable as the objective (M4.4). */
+  onForecast: (variableId: string) => void;
   onFormulaStart: (variableId: string) => void;
   onFormulaCancel: () => void;
   onFormulaCommit: (variableId: string, formula: FormulaNode | null) => void;
@@ -532,6 +535,20 @@ export function Grid({
                                 }}
                               >
                                 {isTraceTarget ? "Clear trace" : "Trace precedents"}
+                              </MenuItem>
+                            )}
+                            {variable.formula && (
+                              // On the row rather than in the toolbar, because the presets
+                              // are built *for* an objective — which driver helps is a
+                              // question about this number and nothing else.
+                              <MenuItem
+                                icon={TrendingUp}
+                                onSelect={() => {
+                                  api.onForecast(variable.id);
+                                  close();
+                                }}
+                              >
+                                Best and worst case
                               </MenuItem>
                             )}
                             {variable.dimensionId && (
