@@ -1,9 +1,10 @@
 # Magpie — Modelling Plan
 
-> **Status (2026-09-01): M0, M1 and M2 are built.**
+> **Status (2026-09-02): M0 through M3 are built.**
 >
 > The model lives in Postgres, `/models/[slug]` renders it, edits and formulas are
-> written back through commands, and the formula language is complete. What exists:
+> written back through commands, the formula language is complete, and every change is
+> recorded with its inverse, its actor and its time. What exists:
 >
 > | File | What it is |
 > |---|---|
@@ -16,13 +17,15 @@
 > | `lib/model/grain.ts` | Month → quarter → year rollup — §1.2 |
 > | `lib/model/commands.ts` | The command bus, in memory — §1.3 |
 > | `lib/model/commands-db.ts` | The same commands, applied to Postgres — M1.1 |
+> | `lib/model/changesets.ts` | The command stream: the log, the undo stack, rollback — M3 |
 > | `lib/model/persist.ts` | `writeModel` / `readModel`; the one place a `Decimal` becomes a number |
 > | `prisma/seed-data.ts` | The demo model, in the shape M0's query returns |
 > | `components/modelling/*` | Grid, toolbar, menu, row flattening, formula editor |
 > | `scripts/calc-check.ts` | `bun run calc:check` — aggregation, parser round-trip, validation, golden file |
+> | `scripts/history-check.ts` | `bun run history:check` — inverses, the undo stack, rollback |
 >
-> **M3 is the next thing to build.** Commands are applied but not recorded, so undo is
-> an in-memory stack and the `History` icon is still decoration.
+> **M4 is the next thing to build.** Scenarios exist as overlay rows and as a dropdown, but
+> nothing can create, branch or edit one, and there is no comparison view.
 >
 > This file replaces `modelling/main.md` and `modelling/brief.md`. Phase M in
 > `learning/path.ts` tracks which tasks Akshay has built and reviewed.
@@ -480,12 +483,63 @@ built on that is unfixable from the user's side.
 
 ### M3 — The command bus, persisted
 
-**M3.1 — Command table** — write every command with its inverse, ordered, with an actor.
-**M3.2 — Server-side undo/redo** — the in-memory stack becomes a query over the stream.
-**M3.3 — Version snapshots and rollback** — `ModelVersion` is a snapshot plus the commands
-since; rollback replays inverses.
-**M3.4 — The history panel** — the `History` icon in the topbar stops being decoration.
-*Done when:* every edit made through the UI appears in history with who and when.
+*M3 is built.* Every mutation lands as a `ChangeSet` of ordered `Command` rows, each stored
+with the command that undoes it, an actor and a time.
+
+**Undo was a bug before this, not a gap.** It only ever touched local state — an edit, an
+undo and a reload brought the edit back, the screen and the database quietly disagreeing
+with nothing to say so. Undo and redo are writes now, on the same serialised chain as an
+edit, because an undo racing the edit it undoes would reach Postgres in the wrong order.
+
+**The log is append-only.** Undo does not delete the changeset it undoes, it appends one
+that says so. The log *is* the audit trail, and a trail you can delete from cannot answer
+the question a finance team actually asks. Redo then falls out for free: the thing that was
+undone is still there.
+
+**The undo stack is reconstructed by replaying the log**, deliberately by the same walk the
+client's reducer does — an `EDIT` pushes and clears the redo branch, an `UNDO` moves one
+entry across, a `REDO` moves it back. Two implementations of one rule, so `history:check`
+asserts they agree rather than trusting the comment saying they do.
+
+**Validation guards intent, not state transitions.** M2.3's gate applies to a person typing
+and to an agent proposing; it does *not* apply to a replay. `history:check` found the
+conflict: deleting `Price` and then deleting `Sales`, whose formula reads `Price`, is
+allowed — the engine reads a missing reference as zero and the client only warns — but
+undoing the second delete restores a formula pointing at a variable that is currently gone,
+and the gate refused it. An undo that can be refused is not an undo, and the state it was
+refusing to restore was one the product had already permitted.
+
+**M3.1 — Command table** — *built.* `ChangeSet` groups ordered `Command` rows; payloads are
+`jsonb`, which is not a breach of §1.1. §1.1 governs the live model, where a rename must not
+break sixty formulas; this is an immutable record of something that already happened, and it
+must say what was done rather than follow a later rename.
+The inverse is **computed on the server**, from small targeted reads, not sent by the client.
+The client has one for its optimistic stack and it would be one field to send — but a stale
+client could then write an inverse that does not invert, and the corruption surfaces only
+when somebody presses undo. `history:check` failed on its first run and found the two
+implementations already disagreeing about a missing member row: the in-memory one falls back
+to the `TOTAL` series exactly as the engine's `inputAt` does, and the database one did not,
+so an undo would have written a zero over a value the user could see.
+**M3.2 — Server-side undo/redo** — *built.* The client generates the changeset id, so its
+stack can name what it expects to undo without a round trip, and the server refuses if that
+is not what is on top — optimistic concurrency rather than hoping the two stacks agree. It
+also makes a retried request idempotent, since the id is the primary key.
+**M3.3 — Version snapshots and rollback** — *built.* **The snapshot is the check, not the
+mechanism.** Writing it back over the tables would be two lines and would leave a hole in
+the log where nobody can see what changed. Rollback replays every changeset since the
+version backwards and *then* compares against the snapshot; a disagreement means some
+command was not honestly invertible, and the transaction is abandoned rather than landing
+somewhere nobody named. This is where storing payloads on `UNDO` and `REDO` rows earns
+itself — the replay is uniform over every kind. A rollback is not "undo the edits": an undo
+changed the model as surely as an edit did.
+**M3.4 — The history panel** — *built.* It reads the command stream itself, not a second log
+written alongside the writes, which is the arrangement that eventually disagrees with them.
+Restoring a version reloads the page rather than patching state: the grid's reducer and its
+undo stack are both describing a model that no longer exists.
+
+*Not built:* `ChangeSet.status`. §1.4's `PROPOSED` lifecycle needs the ghost overlay and the
+accept/reject bar as much as it needs a column, and a status nothing maintains is worse than
+no status. `origin` **is** there, because who caused a change cannot be reconstructed later.
 
 ### M4 — Scenarios and comparison
 
