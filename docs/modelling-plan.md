@@ -1,12 +1,13 @@
 # Magpie — Modelling Plan
 
-> **Status (2026-09-02): M0 through M5 are built.**
+> **Status (2026-09-02): M0 through M5 are built in full; M6 and M7 partly.**
 >
 > The model lives in Postgres, `/models/[slug]` renders it, edits and formulas are
 > written back through commands, the formula language is complete, every change is
 > recorded with its inverse, its actor and its time, scenarios can be created, branched,
-> edited and compared, and an agent can read the model and propose changes a human must
-> accept before anything moves. What exists:
+> edited and compared, an agent can read the model and propose changes a human must accept
+> before anything moves, cells carry comments, and a CSV import produces a real variable
+> through the ordinary command bus. What exists:
 >
 > | File | What it is |
 > |---|---|
@@ -25,15 +26,20 @@
 > | `lib/model/agent-tools.ts` | Reads, the sandbox, and the grounding gate — no SDK import — M5 |
 > | `lib/model/openai-agent.ts` | The only file that knows the vendor — M5.2 |
 > | `scripts/agent-check.ts` | `bun run agent:check` — the grounding gate, no network |
+> | `lib/model/comments.ts` | Comments, anchored to a variable and a period — M6.1 |
+> | `lib/model/csv-import.ts` | CSV → an `InsertVariable` command — M7.1 |
 > | `lib/model/persist.ts` | `writeModel` / `readModel`; the one place a `Decimal` becomes a number |
 > | `prisma/seed-data.ts` | The demo model, in the shape M0's query returns |
 > | `components/modelling/*` | Grid, toolbar, menu, row flattening, formula editor |
 > | `scripts/calc-check.ts` | `bun run calc:check` — aggregation, parser round-trip, validation, golden file |
 > | `scripts/history-check.ts` | `bun run history:check` — inverses, the undo stack, rollback |
 >
-> **M6 and M7 are next, and only partly built.** Comments (M6.1) and CSV import (M7.1) are
-> real; presence, approvals, a live connector and the six templates are not — see their
-> sections for why each was left out rather than rushed.
+> **What is left, by name:** presence and live updates (M6.2), notifications and approvals
+> (M6.3), a real billing connector with its sync (M7.2, M7.3), and the six seedable template
+> libraries (M7.4). Each needs an investment — a realtime transport, a review lifecycle with
+> its own permissions, an actual third-party integration, or a content project across six
+> domains — that this pass deliberately did not rush. Better to say so than to ship a
+> half-working version of any of them.
 >
 > This file replaces `modelling/main.md` and `modelling/brief.md`. Phase M in
 > `learning/path.ts` tracks which tasks Akshay has built and reviewed.
@@ -660,18 +666,39 @@ one.
 
 ### M6 — Collaboration
 
-**M6.1 — Comments** anchored to `(variable, period)` — the `MessageSquare` icon.
-**M6.2 — Presence and live updates** — two browsers on one model stay consistent.
-**M6.3 — Notifications and approvals** — a change can require a reviewer.
-*Respect:* §1.3 — this is the command stream with a transport, not a second system.
+**M6.1 — Comments**, anchored to `(variable, period)` — *built.* Deliberately not a
+`Command`: a comment changes nothing the engine computes, so it has no inverse and no place
+in the undo stack. It is closer to a `ModelVersion`'s label than to an edit, and plain CRUD
+against a `Comment` table is the honest shape for that — §1.3's one-mechanism argument is
+about the model's numbers, and a comment is not one of those.
+
+*Not built:* **M6.2 — Presence and live updates.** Two browsers staying consistent needs a
+transport — polling at minimum, a socket for anything that feels live — and a decision about
+what "consistent" means when both are mid-edit. Bolting a half version onto the read path
+that already exists would be visible the first time two people actually tried it.
+*Not built:* **M6.3 — Notifications and approvals.** "A change can require a reviewer" is a
+permissions model this schema does not have yet (A3's org tables are still a TODO), and a
+review gate with no real reviewer roles behind it is a checkbox, not a control.
 
 ### M7 — Sources and templates
 
-**M7.1 — CSV import** into `LINKED` variables, the honest v1 connector.
-**M7.2 — A real connector** (billing first — it is where ARR actually lives).
-**M7.3 — Sync writes commands**, so a number that changes on its own is explainable.
-**M7.4 — The six templates** from §0, as seedable variable libraries.
-*Done when:* a new user picks "ARR Planning" and gets a working model.
+**M7.1 — CSV import**, the honest v1 connector — *built*, and built to lean on what already
+exists rather than add to it: parsing is pure and isomorphic, and a successful parse produces
+an ordinary `InsertVariable` command — the same one "Add variable" dispatches — rather than a
+bespoke write path. §6's requirement that a synced number be explainable through the audit
+log is then true for free, instead of needing a second mechanism once M7.2 needs the same
+property for a live connector.
+
+*Not built:* **M7.2 — A real connector** and **M7.3 — sync writes commands.** A live billing
+integration is a relationship with an actual third party (auth, a schema to map, a polling or
+webhook cadence, failure handling for an API this repo does not control) — not a bigger
+version of parsing a paste, and not something to stand up quickly.
+*Not built:* **M7.4 — The six templates.** §0 is explicit that the engine is one system and
+the templates are six variable libraries on top of it; every mechanism a template would use —
+groups, dimensions, formulas, scenarios — is built and proven on the ARR template already.
+What is missing is the content itself: five more domains authored with the same care the ARR
+model got, which is a writing project, not an engineering one, and rushing it would produce
+five demos nobody would trust the way they trust the first.
 
 ---
 
