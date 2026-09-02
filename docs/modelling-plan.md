@@ -1,11 +1,12 @@
 # Magpie — Modelling Plan
 
-> **Status (2026-09-02): M0 through M4 are built.**
+> **Status (2026-09-02): M0 through M5 are built.**
 >
 > The model lives in Postgres, `/models/[slug]` renders it, edits and formulas are
 > written back through commands, the formula language is complete, every change is
-> recorded with its inverse, its actor and its time, and scenarios can be created,
-> branched, edited and compared. What exists:
+> recorded with its inverse, its actor and its time, scenarios can be created, branched,
+> edited and compared, and an agent can read the model and propose changes a human must
+> accept before anything moves. What exists:
 >
 > | File | What it is |
 > |---|---|
@@ -21,14 +22,18 @@
 > | `lib/model/changesets.ts` | The command stream: the log, the undo stack, rollback — M3 |
 > | `lib/model/scenario.ts` | What an override is, and how a branch resolves — M4 |
 > | `lib/model/presets.ts` | Best/worst overlays, with direction measured — M4.4 |
+> | `lib/model/agent-tools.ts` | Reads, the sandbox, and the grounding gate — no SDK import — M5 |
+> | `lib/model/openai-agent.ts` | The only file that knows the vendor — M5.2 |
+> | `scripts/agent-check.ts` | `bun run agent:check` — the grounding gate, no network |
 > | `lib/model/persist.ts` | `writeModel` / `readModel`; the one place a `Decimal` becomes a number |
 > | `prisma/seed-data.ts` | The demo model, in the shape M0's query returns |
 > | `components/modelling/*` | Grid, toolbar, menu, row flattening, formula editor |
 > | `scripts/calc-check.ts` | `bun run calc:check` — aggregation, parser round-trip, validation, golden file |
 > | `scripts/history-check.ts` | `bun run history:check` — inverses, the undo stack, rollback |
 >
-> **M5 is the next thing to build.** Everything the agent needs is in place — typed commands
-> with Zod schemas, batch changesets, validation at the boundary — and nothing calls an LLM.
+> **M6 and M7 are next, and only partly built.** Comments (M6.1) and CSV import (M7.1) are
+> real; presence, approvals, a live connector and the six templates are not — see their
+> sections for why each was left out rather than rushed.
 >
 > This file replaces `modelling/main.md` and `modelling/brief.md`. Phase M in
 > `learning/path.ts` tracks which tasks Akshay has built and reviewed.
@@ -603,15 +608,55 @@ command's before-state is what the previous one left behind.
 
 ### M5 — The agent
 
-**M5.1 — Zod command schemas** → tool definitions, generated, one source of truth.
-**M5.2 — The run loop** — Claude with tool calling, outline + targeted reads, streamed.
-**M5.3 — Proposals** — a `ChangeSet` in `PROPOSED`, ghost values in the grid, the
-`Accept all / Undo all / Compare` bar from `designs/proto-screen-3.jpg`.
-**M5.4 — Persisted transcripts** — `AgentRun` holds prompt, thinking and tool calls, so a
-refresh does not lose the run.
-*Done when:* "what's my forecast at 30% growth?" produces a changeset a human accepts.
-*Respect:* §1.4 — the agent never writes directly, and a proposal that does not compile is
-never shown.
+*M5 is built.*
+
+**No SDK import in the file that decides what is safe.** `agent-tools.ts` holds the tool
+functions and the grounding gate; `openai-agent.ts` is the only file that knows the vendor —
+the same boundary `lib/recon/adjudicate.ts` draws for reconciliation, and it paid for itself
+on paper before it needed to in practice: a provider swap is a one-file change.
+
+**A proposal takes no `seq` until accepted.** `ChangeSet.seq` and `Command.inverse` are
+nullable now: a `PROPOSED` changeset holds commands nobody has run, so it must not occupy a
+slot in the ordered log that rollback and the undo stack walk depend on. This found a real
+bug in code M3 shipped: `readHistory` and `nextSeq` both ordered by `seq DESC` without
+excluding nulls, and Postgres sorts NULL first on DESC — so a pending proposal would have
+appeared at the very top of the history panel, and the undo stack would have tried to undo a
+command that was never applied. Mutation-tested: removing the filter fails three assertions.
+
+**Inverses are computed at accept time, not proposal time.** The model can move while a
+proposal sits on screen; an inverse computed against a stale "before" would undo to a state
+that never existed. Validation runs again at accept for the same reason it runs again on
+every replay: intent is judged the moment a human says yes, not the moment it was drafted.
+
+**A live run found two gaps neither `calc:check` nor `history:check` could, because they
+only show up talking to an actual model.** A generic "not well-formed" error gave the loop
+nothing to correct, and it spent six turns alternating between two wrong shapes for a
+`VALUES` override before running out of budget — tool errors now surface Zod's own
+diagnostics, path and expectation, which is what let the next call differ from the last one.
+And a proposed `SetOverride` on the base scenario passed grounding and would have failed
+only at accept time with "the base case holds values, not overrides" — exactly the gap §5
+forbids, a proposal that compiles but cannot land. Fixed in the gate itself, pinned in
+`agent:check` so it cannot regress silently.
+
+**M5.1 — Zod command schemas → tool definitions** — *built.* `z.toJSONSchema` on the same
+`CommandSchema` the network boundary already validates against, so the tool the model calls
+and the schema the server enforces cannot drift into two definitions of a legal command.
+**M5.2 — The run loop** — *built*, against OpenAI (the keys available), tool calling over
+Chat Completions rather than Claude's tool-use API — the same swap R4's adjudication tier
+made, for the same reason. Outline + targeted reads, never the full data: the outline is
+names, kinds and printed formulas, never a series.
+**M5.3 — Proposals** — *built.* A pending proposal is previewed through the exact
+delta-under-every-number mechanism M4.3 built for comparing scenarios, rather than a second
+visual language for the same idea — "ghost overlay beside current ones" turns out to already
+look like the compare view once one exists. No separate Accept all / Undo all / Compare bar;
+Accept and Reject live on the proposal itself in the agent panel, since a run only ever
+proposes one changeset.
+**M5.4 — Persisted transcripts** — *built.* `AgentRun` holds the prompt, the tool-call
+sequence and the answer, so a refresh does not lose the run.
+
+*Not built:* `searchDataSources`. It reads `DataSource` rows M7 has not created, and a tool
+over a table that does not exist is not a smaller version of the feature — it is a broken
+one.
 
 ### M6 — Collaboration
 
