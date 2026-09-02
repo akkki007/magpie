@@ -25,6 +25,8 @@ export type ViewOptions = {
   grain: Grain;
   trend: boolean;
   formula: boolean;
+  /** The scenario to show a delta against, or `null` for no comparison (M4.3). */
+  compare: string | null;
   compact: boolean;
 };
 
@@ -274,6 +276,33 @@ export function Toolbar({
       >
         {({ close }) => (
           <>
+            <MenuLabel>Compare with</MenuLabel>
+            <MenuChoice
+              selected={view.compare === null}
+              onSelect={() => {
+                onViewChange({ ...view, compare: null });
+                close();
+              }}
+            >
+              Nothing
+            </MenuChoice>
+            {scenarios
+              // Comparing a scenario with itself is a column of dashes.
+              .filter((option) => option.id !== scenarioId)
+              .map((option) => (
+                <MenuChoice
+                  key={option.id}
+                  selected={view.compare === option.id}
+                  onSelect={() => {
+                    onViewChange({ ...view, compare: option.id });
+                    close();
+                  }}
+                >
+                  {option.name}
+                </MenuChoice>
+              ))}
+            <MenuSeparator />
+
             <MenuLabel>Time grain</MenuLabel>
             {GRAINS.map((grain) => (
               <MenuChoice

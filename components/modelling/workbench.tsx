@@ -100,6 +100,7 @@ export function Workbench({ initialModel, slug }: { initialModel: Model; slug: s
     trend: true,
     formula: true,
     compact: false,
+    compare: null,
   });
   const [query, setQuery] = useState("");
   const [collapsedGroups, setCollapsedGroups] = useState<ReadonlySet<string>>(new Set());
@@ -120,6 +121,19 @@ export function Workbench({ initialModel, slug }: { initialModel: Model; slug: s
      three; for a model this size that is well under a millisecond, and the
      alternative — incremental invalidation — is a cache to get wrong. */
   const evaluation = useMemo(() => evaluate(model, scenarioId), [model, scenarioId]);
+
+  /**
+   * The comparison scenario, evaluated (M4.3). A second full pass over the model rather
+   * than a diff of the first: §4 says a comparison "evaluates two scenarios and diffs the
+   * series", and an overlay can change a formula, not only an input — there is no
+   * arithmetic on the base result that gets you there.
+   */
+  const compare = useMemo(() => {
+    if (!view.compare || view.compare === scenarioId) return null;
+    const scenario = model.scenarios.find((s) => s.id === view.compare);
+    if (!scenario) return null;
+    return { name: scenario.name, evaluation: evaluate(model, scenario.id) };
+  }, [model, scenarioId, view.compare]);
   const buckets = useMemo(() => bucketsFor(model.periods, view.grain), [model.periods, view.grain]);
   const rows = useMemo(
     () => flattenRows(model, { collapsedGroups, expandedVariables, query }),
@@ -283,8 +297,9 @@ export function Workbench({ initialModel, slug }: { initialModel: Model; slug: s
     const index = rows.findIndex((row) => row.key === selection.rowKey);
     if (index < 0) return;
 
-    const { headerHeight, nameWidth, trendWidth, formulaWidth, periodWidth } = GRID_GEOMETRY;
-    const height = GRID_GEOMETRY.rowHeight(view.compact);
+    const { nameWidth, trendWidth, formulaWidth, periodWidth } = GRID_GEOMETRY;
+    const headerHeight = GRID_GEOMETRY.headerHeight(compare !== null);
+    const height = GRID_GEOMETRY.rowHeight(view.compact, compare !== null);
     const lead = nameWidth + (view.trend ? trendWidth : 0) + (view.formula ? formulaWidth : 0);
 
     const top = headerHeight + index * height;
@@ -298,7 +313,7 @@ export function Workbench({ initialModel, slug }: { initialModel: Model; slug: s
     else if (left + periodWidth > element.scrollLeft + element.clientWidth) {
       element.scrollLeft = left + periodWidth - element.clientWidth;
     }
-  }, [selection, rows, view.compact, view.trend, view.formula]);
+  }, [selection, rows, view.compact, view.trend, view.formula, compare]);
 
   /* ── Editing ───────────────────────────────────────────────────────────*/
   const startEdit = useCallback(
@@ -693,6 +708,7 @@ export function Workbench({ initialModel, slug }: { initialModel: Model; slug: s
           buckets={buckets}
           viewport={scrollRef}
           formulaEditing={formulaEditing}
+          compare={compare}
           evaluation={evaluation}
           view={view}
           selection={selection}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ChevronDown,
   ChevronRight,
@@ -23,7 +23,7 @@ import type { Evaluation } from "@/lib/model/engine";
 import { dependenciesOf, printFormula } from "@/lib/model/formula";
 import { FORMAT_GLYPH, formatValue } from "@/lib/model/format";
 import { rollup, type Bucket } from "@/lib/model/grain";
-import type { ChipTone, FormulaNode, Model } from "@/lib/model/types";
+import type { ChipTone, FormulaNode, Model, Variable } from "@/lib/model/types";
 import { TOTAL } from "@/lib/model/types";
 
 /**
@@ -86,8 +86,11 @@ const CHIP: Record<ChipTone, string> = {
  * from these instead — and both axes being a fixed size is exactly what makes that possible.
  */
 export const GRID_GEOMETRY = {
-  headerHeight: 32,
-  rowHeight: (compact: boolean) => (compact ? 26 : 30),
+  /** Comparing adds a "vs <scenario>" line to every column header. */
+  headerHeight: (comparing = false) => (comparing ? 44 : 32),
+  /** Comparing puts a second line in every cell, so the row has to grow to hold it. */
+  rowHeight: (compact: boolean, comparing = false) =>
+    comparing ? (compact ? 38 : 44) : compact ? 26 : 30,
   nameWidth: 292,
   trendWidth: 116,
   formulaWidth: 246,
@@ -106,6 +109,7 @@ export function Grid({
   selection,
   editing,
   trace,
+  compare,
   renaming,
   adding,
   formulaEditing,
@@ -122,6 +126,8 @@ export function Grid({
   selection: Selection | null;
   editing: Editing | null;
   trace: string | null;
+  /** The scenario being compared against, evaluated (M4.3). */
+  compare: { name: string; evaluation: Evaluation } | null;
   /** The variable whose formula panel is open — at most one at a time. */
   formulaEditing: string | null;
   renaming: string | null;
@@ -134,24 +140,34 @@ export function Grid({
   }, [model.variables]);
 
   /** Rolled-up values per row. Recomputed when the model, grain or rows move. */
-  const valuesByRow = useMemo(() => {
-    const out = new Map<string, number[]>();
-    for (const row of rows) {
-      if (row.kind === "variable") {
-        out.set(row.key, rollup(evaluation.series(row.variable.id), buckets, row.variable.aggregation));
-      } else if (row.kind === "member") {
-        out.set(
-          row.key,
-          rollup(
-            evaluation.series(row.variable.id, row.member.key),
-            buckets,
-            row.variable.aggregation,
-          ),
-        );
+  const seriesByRow = useCallback(
+    (source: Evaluation) => {
+      const out = new Map<string, number[]>();
+      for (const row of rows) {
+        if (row.kind === "variable") {
+          out.set(row.key, rollup(source.series(row.variable.id), buckets, row.variable.aggregation));
+        } else if (row.kind === "member") {
+          out.set(
+            row.key,
+            rollup(
+              source.series(row.variable.id, row.member.key),
+              buckets,
+              row.variable.aggregation,
+            ),
+          );
+        }
       }
-    }
-    return out;
-  }, [rows, buckets, evaluation]);
+      return out;
+    },
+    [rows, buckets],
+  );
+
+  const valuesByRow = useMemo(() => seriesByRow(evaluation), [seriesByRow, evaluation]);
+  /** The same rows under the scenario being compared against (M4.3), or nothing. */
+  const compareByRow = useMemo(
+    () => (compare ? seriesByRow(compare.evaluation) : null),
+    [seriesByRow, compare],
+  );
 
   /** The rows a trace lights up: the traced variable's direct precedents. */
   const tracedIds = useMemo(() => {
@@ -160,7 +176,8 @@ export function Grid({
     return new Set(dependenciesOf(target?.formula));
   }, [trace, model.variables]);
 
-  const rowHeight = GRID_GEOMETRY.rowHeight(view.compact);
+  const rowHeight = GRID_GEOMETRY.rowHeight(view.compact, compare !== null);
+  const headerHeight = GRID_GEOMETRY.headerHeight(compare !== null);
   const metaColumns = 1 + (view.trend ? 1 : 0) + (view.formula ? 1 : 0);
 
   /**
@@ -275,23 +292,32 @@ export function Grid({
         <tr>
           <th
             scope="col"
-            className="sticky top-0 left-0 z-40 h-8 border-r border-b border-line bg-surface px-3 text-left font-medium text-ink-muted"
+            style={{ height: headerHeight }}
+            className="sticky top-0 left-0 z-40 border-r border-b border-line bg-surface px-3 text-left font-medium text-ink-muted"
           >
             <span className="flex items-center gap-2">
               <Layers className="h-3.5 w-3.5 text-ink-faint" strokeWidth={1.75} aria-hidden />
               Variable Name
             </span>
           </th>
-          {view.trend && <HeadCell>Trend</HeadCell>}
-          {view.formula && <HeadCell>Formula</HeadCell>}
-          {padLeft > 0 && <HeadCell divider={false}>{null}</HeadCell>}
+          {view.trend && <HeadCell height={headerHeight}>Trend</HeadCell>}
+          {view.formula && <HeadCell height={headerHeight}>Formula</HeadCell>}
+          {padLeft > 0 && <HeadCell divider={false} height={headerHeight}>{null}</HeadCell>}
           {visibleBuckets.map((bucket) => (
-            <HeadCell key={bucket.key} align="right" divider={false}>
-              {bucket.label}
+            <HeadCell key={bucket.key} align="right" divider={false} height={headerHeight}>
+              <span className="block">{bucket.label}</span>
+              {compare && (
+                // Named in every column, not once above the grid. A scrolled header that
+                // says "Jan '26" over a pair of numbers, with the second number's meaning
+                // twelve columns to the left, is how a comparison gets misread.
+                <span className="block truncate text-[10px] font-normal text-ink-faint">
+                  vs {compare.name}
+                </span>
+              )}
             </HeadCell>
           ))}
-          {padRight > 0 && <HeadCell divider={false}>{null}</HeadCell>}
-          <HeadCell divider={false}>{null}</HeadCell>
+          {padRight > 0 && <HeadCell divider={false} height={headerHeight}>{null}</HeadCell>}
+          <HeadCell divider={false} height={headerHeight}>{null}</HeadCell>
         </tr>
       </thead>
 
@@ -654,15 +680,28 @@ export function Grid({
                     ) : error ? (
                       <span className="text-ink-faint">—</span>
                     ) : (
-                      <span
-                        className={cn(
-                          value === 0 && "text-ink-faint",
-                          value < 0 && "text-neg-fg",
-                          held && "text-violet-700",
+                      <>
+                        <span
+                          className={cn(
+                            "block",
+                            value === 0 && "text-ink-faint",
+                            value < 0 && "text-neg-fg",
+                            held && "text-violet-700",
+                          )}
+                        >
+                          {formatValue(value, variable.format)}
+                        </span>
+                        {compareByRow && (
+                          // The delta, not the other scenario's number. Two numbers in a
+                          // cell is a lookup table; a number and its difference is an
+                          // answer — and the difference is the question a comparison is
+                          // being asked. The other value is one click away in the picker.
+                          <Delta
+                            value={value - (compareByRow.get(row.key)?.[column] ?? 0)}
+                            format={variable.format}
+                          />
                         )}
-                      >
-                        {formatValue(value, variable.format)}
-                      </span>
+                      </>
                     )}
                   </td>
                 );
@@ -682,20 +721,43 @@ export function Grid({
   );
 }
 
+/**
+ * A signed difference, quiet by default.
+ *
+ * Zero renders as a dash rather than "0": in a comparison the interesting cells are the ones
+ * that moved, and a column of zeroes competing for attention with them defeats the point.
+ */
+function Delta({ value, format }: { value: number; format: Variable["format"] }) {
+  const flat = Math.abs(value) < 1e-6;
+  return (
+    <span
+      className={cn(
+        "block text-[11px] tabular-nums",
+        flat ? "text-ink-faint" : value > 0 ? "text-pos-fg" : "text-neg-fg",
+      )}
+    >
+      {flat ? "–" : `${value > 0 ? "+" : "−"}${formatValue(Math.abs(value), format)}`}
+    </span>
+  );
+}
+
 function HeadCell({
   children,
   align = "left",
   divider = true,
+  height = 32,
 }: {
   children: React.ReactNode;
   align?: "left" | "right";
   divider?: boolean;
+  height?: number;
 }) {
   return (
     <th
       scope="col"
+      style={{ height }}
       className={cn(
-        "sticky top-0 z-30 h-8 border-b border-line bg-surface px-3 font-medium text-ink-muted",
+        "sticky top-0 z-30 border-b border-line bg-surface px-3 font-medium text-ink-muted",
         divider && "border-r",
         align === "right" ? "text-right" : "text-left",
       )}
