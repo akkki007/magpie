@@ -12,6 +12,7 @@ import {
   SlidersHorizontal,
   Trash2,
   Undo2,
+  Upload,
   X,
 } from "lucide-react";
 
@@ -36,6 +37,59 @@ const GRAINS: { value: Grain; label: string; hint: string }[] = [
   { value: "YEAR", label: "Year", hint: "Rolled up" },
 ];
 
+/**
+ * The form inside the Import CSV popover. A component of its own so the two lines of state
+ * it needs — the pasted text and the chosen name — do not have to live in `Toolbar`, which
+ * otherwise has no state at all.
+ */
+function ImportCsvForm({
+  onImport,
+  onDone,
+}: {
+  onImport: (name: string, csvText: string) => void;
+  onDone: () => void;
+}) {
+  const [name, setName] = useState("");
+  const [csv, setCsv] = useState("");
+  return (
+    <div className="flex flex-col gap-1.5 p-1">
+      <MenuLabel>Import CSV</MenuLabel>
+      <input
+        value={name}
+        onChange={(event) => setName(event.target.value)}
+        placeholder="Variable name"
+        className="rounded-button border border-line bg-canvas px-2 py-1 text-[12px] text-ink-1 outline-none focus:border-blue-400"
+      />
+      <textarea
+        value={csv}
+        onChange={(event) => setCsv(event.target.value)}
+        rows={5}
+        placeholder={"2026-01, 12000\n2026-02, 13500\n…"}
+        className="resize-none rounded-button border border-line bg-canvas px-2 py-1.5 font-mono text-[11px] text-ink-1 outline-none focus:border-blue-400"
+      />
+      <p className="px-0.5 text-[11px] text-ink-faint">
+        One period and value per line — a paste from a spreadsheet works.
+      </p>
+      <button
+        type="button"
+        disabled={!name.trim() || !csv.trim()}
+        onClick={() => {
+          onImport(name.trim(), csv);
+          onDone();
+        }}
+        className={cn(
+          "mt-0.5 rounded-button px-2 py-1.5 text-[12px]",
+          name.trim() && csv.trim()
+            ? "bg-blue-400 text-white hover:bg-blue-500"
+            : "cursor-not-allowed bg-line text-ink-faint",
+        )}
+      >
+        Import
+      </button>
+    </div>
+  );
+}
+
 export function Toolbar({
   query,
   onQueryChange,
@@ -45,6 +99,7 @@ export function Toolbar({
   onScenarioCreate,
   onScenarioRename,
   onScenarioDelete,
+  onImportCsv,
   view,
   onViewChange,
   allCollapsed,
@@ -63,6 +118,9 @@ export function Toolbar({
   onScenarioCreate: (parentId: string | null) => void;
   onScenarioRename: (scenarioId: string, name: string) => void;
   onScenarioDelete: (scenarioId: string) => void;
+  /** Parse a pasted CSV against this model and hand back an InsertVariable command,
+   *  or null (with a toast) if nothing in it matched — M7.1. */
+  onImportCsv: (name: string, csvText: string) => void;
   view: ViewOptions;
   onViewChange: (next: ViewOptions) => void;
   allCollapsed: boolean;
@@ -134,6 +192,16 @@ export function Toolbar({
           <Redo2 className="h-4 w-4" strokeWidth={1.75} />
         </IconButton>
       </div>
+
+      <Menu
+        align="end"
+        width={280}
+        ariaLabel="Import CSV"
+        triggerClassName="grid h-8 w-8 shrink-0 place-items-center rounded-control text-ink-muted transition-colors duration-150 hover:bg-hover hover:text-ink"
+        trigger={() => <Upload className="h-4 w-4" strokeWidth={1.75} />}
+      >
+        {({ close }) => <ImportCsvForm onImport={onImportCsv} onDone={close} />}
+      </Menu>
 
       <Menu
         align="end"

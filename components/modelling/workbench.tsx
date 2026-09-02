@@ -20,6 +20,7 @@ import { persistCommands, redoModel, undoModel, type AgentProposal } from "@/app
 import { applyAll, type Command } from "@/lib/model/commands";
 import { evaluate } from "@/lib/model/engine";
 import { dependentsOf } from "@/lib/model/formula";
+import { parseCsv } from "@/lib/model/csv-import";
 import { forecastScenarios } from "@/lib/model/presets";
 import { withCell } from "@/lib/model/scenario";
 import { parseValue, toEditable } from "@/lib/model/format";
@@ -752,6 +753,38 @@ export function Workbench({
     [model.scenarios, run],
   );
 
+  /**
+   * CSV import (§6, §7 M7.1): parse in the browser, then dispatch the same InsertVariable
+   * command "Add variable" produces. §6 asks that a synced number be explainable through
+   * the audit log; going through the command bus is what makes that true from day one
+   * instead of needing a second mechanism once a real connector exists (M7.2).
+   */
+  const importCsv = useCallback(
+    (name: string, csvText: string) => {
+      const groupId = model.groups[0]?.id;
+      if (!groupId) return;
+
+      const result = parseCsv(csvText, model);
+      if (!result.ok) {
+        toast.error("Nothing was imported", { description: result.error });
+        return;
+      }
+
+      run({
+        type: "InsertVariable",
+        index: model.variables.length,
+        variable: { id: crypto.randomUUID(), groupId, name, kind: "LINKED", format: "COUNT", aggregation: "SUM" },
+        inputs: { [TOTAL]: result.series },
+      });
+
+      const skipped = result.total - result.matched;
+      toast.success(`Imported ${result.matched} period${result.matched === 1 ? "" : "s"}`, {
+        description: skipped > 0 ? `${skipped} row${skipped === 1 ? "" : "s"} did not match a period and were skipped.` : undefined,
+      });
+    },
+    [model, run],
+  );
+
   const allCollapsed = collapsedGroups.size === model.groups.length;
   const selectedRow = rowOf(selection?.rowKey);
   const selectedVariable =
@@ -779,6 +812,7 @@ export function Workbench({
         onScenarioCreate={createScenario}
         onScenarioRename={(scenarioId, name) => run({ type: "RenameScenario", scenarioId, name })}
         onScenarioDelete={deleteScenario}
+        onImportCsv={importCsv}
         view={view}
         onViewChange={setView}
         allCollapsed={allCollapsed}
