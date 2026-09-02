@@ -271,6 +271,7 @@ model Model {
   changeSets     ChangeSet[]
   versions       ModelVersion[]
   agentRuns      AgentRun[]
+  comments       Comment[]
 
   @@unique([slug])
   @@index([organisationId])
@@ -316,6 +317,7 @@ model Variable {
   referencedBy FormulaNode[] @relation("FormulaRef")
   inputs    VariableInput[]
   series    VariableSeries[]
+  comments  Comment[]
   overrides ScenarioOverride[]
 
   // §2: a formula referencing "Revenue" can only mean one variable. The
@@ -514,6 +516,30 @@ model Command {
 
   @@index([changeSetId])
   @@map("command")
+}
+
+/// One comment, anchored to a variable and a period (§6, M6.1). Not a Command: a comment
+/// does not change the model's numbers, so it has no inverse and takes no place in the
+/// undo stack — it is closer to `ModelVersion`'s "a note about the model" than to an edit.
+model Comment {
+  id         String    @id @default(uuid())
+  modelId    String
+  variableId String
+  /// The first of the month, matching `VariableInput.period` — an index would silently
+  /// point at a different month if the model's horizon ever changed shape.
+  period     DateTime  @db.Date
+  body       String
+  authorId   String?
+  authorName String
+  resolvedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  model    Model    @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  variable Variable @relation(fields: [variableId], references: [id], onDelete: Cascade)
+
+  @@index([modelId, createdAt])
+  @@index([variableId])
+  @@map("comment")
 }
 
 /// A run of the agent (§5, M5.4): the prompt, its tool calls, and the changeset it

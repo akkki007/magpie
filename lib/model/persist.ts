@@ -91,7 +91,7 @@ export function periodsBetween(start: Date, end: Date): Period[] {
   return periods;
 }
 
-const periodDate = (period: Period) => new Date(Date.UTC(period.year, period.month - 1, 1));
+export const periodDate = (period: Period) => new Date(Date.UTC(period.year, period.month - 1, 1));
 
 /* ── Writing ──────────────────────────────────────────────────────────────*/
 

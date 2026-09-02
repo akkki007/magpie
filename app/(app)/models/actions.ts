@@ -20,6 +20,7 @@ import {
 import { CommandSchema } from "@/lib/model/command-schema";
 import { labelFor, type Command } from "@/lib/model/commands";
 import { applyCommandToDb } from "@/lib/model/commands-db";
+import { addComment, listComments, setCommentResolved, type Comment } from "@/lib/model/comments";
 import { readModel } from "@/lib/model/persist";
 import { runAgent as runOpenAiAgent, type AgentStep } from "@/lib/model/openai-agent";
 import { proposeChangeSet } from "@/lib/model/changesets";
@@ -409,3 +410,33 @@ export async function askAgent(
 }
 
 export type { AgentStep };
+
+
+/* ── Comments (§6, M6.1) ─────────────────────────────────────────────────*/
+
+export async function readModelComments(slug: string): Promise<Result<{ comments: Comment[] }>> {
+  return withModel(slug, async (tx, modelId) => ({ ok: true, comments: await listComments(tx, modelId) }));
+}
+
+export async function addModelComment(
+  slug: string,
+  variableId: unknown,
+  period: unknown,
+  body: unknown,
+): Promise<Result> {
+  const parsed = z
+    .object({ variableId: z.string().min(1), period: z.number().int().min(0), body: z.string().trim().min(1).max(2000) })
+    .safeParse({ variableId, period, body });
+  if (!parsed.success) return { ok: false, error: "That comment was not in a form the server could accept." };
+
+  return withModel(slug, (tx, modelId, who) => addComment(tx, { modelId, ...parsed.data, actor: who }));
+}
+
+export async function resolveModelComment(slug: string, commentId: unknown, resolved: unknown): Promise<Result> {
+  const parsed = z.object({ commentId: z.string().min(1), resolved: z.boolean() }).safeParse({ commentId, resolved });
+  if (!parsed.success) return { ok: false, error: "That request was not in a form the server could accept." };
+
+  return withModel(slug, (tx, modelId) =>
+    setCommentResolved(tx, { modelId, commentId: parsed.data.commentId, resolved: parsed.data.resolved }),
+  );
+}

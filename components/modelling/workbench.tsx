@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 
 import { AgentPanel } from "@/components/modelling/agent-panel";
+import { CommentsPanel } from "@/components/modelling/comments-panel";
 import {
   Grid,
   GRID_GEOMETRY,
@@ -766,6 +767,7 @@ export function Workbench({
         meta="Saved to Postgres"
         agent={<AgentPanel slug={slug} onProposalChange={setProposal} />}
         history={<HistoryPanel slug={slug} />}
+        comments={<CommentsPanel slug={slug} model={model} />}
       />
 
       <Toolbar

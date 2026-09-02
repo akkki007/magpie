@@ -1,4 +1,4 @@
-import { History, MessageSquare, Settings, Star, Table2 } from "lucide-react";
+import { History, Settings, Star, Table2 } from "lucide-react";
 
 import { cn } from "@/lib/cn";
 
@@ -17,6 +17,7 @@ export function Topbar({
   meta,
   history,
   agent,
+  comments,
 }: {
   workspace: string;
   object: string;
@@ -30,6 +31,8 @@ export function Topbar({
   history?: React.ReactNode;
   /** The agent panel trigger (§5) — a slot for the same reason `history` is one. */
   agent?: React.ReactNode;
+  /** The comments panel trigger (§6, M6.1) — a slot for the same reason. */
+  comments?: React.ReactNode;
 }) {
   return (
     <header className="flex h-[52px] shrink-0 items-center gap-2 border-b border-line px-4">
@@ -58,10 +61,10 @@ export function Topbar({
         </button>
         {agent}
         {history}
+        {comments}
         {(
           [
             ...(history ? [] : ([[History, "Version history"]] as const)),
-            [MessageSquare, "Comments"],
             [Star, "Favourite"],
             [Settings, "Model settings"],
           ] as const
