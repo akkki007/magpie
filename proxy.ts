@@ -15,6 +15,10 @@ import { getSessionCookie } from "better-auth/cookies";
  */
 const PROTECTED = ["/workspace"];
 const AUTH_PAGES = ["/sign-in", "/sign-in/link", "/sign-up"];
+// The marketing page is for someone deciding whether to sign up; a returning, signed-in
+// visitor gets no value from reading it again, so they skip straight to `/workspace` —
+// the same redirect AUTH_PAGES already gets, just one more path added to it.
+const SIGNED_IN_SKIPS = [...AUTH_PAGES, "/"];
 
 export default function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
@@ -27,7 +31,7 @@ export default function proxy(request: NextRequest) {
     return NextResponse.redirect(url);
   }
 
-  if (hasSessionCookie && AUTH_PAGES.includes(pathname)) {
+  if (hasSessionCookie && SIGNED_IN_SKIPS.includes(pathname)) {
     return NextResponse.redirect(new URL("/workspace", request.nextUrl));
   }
 
