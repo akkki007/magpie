@@ -15,11 +15,18 @@ export function Topbar({
   workspace,
   object,
   meta,
+  history,
 }: {
   workspace: string;
   object: string;
   /** e.g. "Edited 2d ago" — provenance, not an action. */
   meta?: string;
+  /**
+   * Replaces the inert History button when a surface can actually show history.
+   * A slot rather than a `slug` prop: this bar is a server component and knows
+   * nothing about models, and the panel needs to be a client one.
+   */
+  history?: React.ReactNode;
 }) {
   return (
     <header className="flex h-[52px] shrink-0 items-center gap-2 border-b border-line px-4">
@@ -46,9 +53,10 @@ export function Topbar({
         >
           Share
         </button>
+        {history}
         {(
           [
-            [History, "Version history"],
+            ...(history ? [] : ([[History, "Version history"]] as const)),
             [MessageSquare, "Comments"],
             [Star, "Favourite"],
             [Settings, "Model settings"],

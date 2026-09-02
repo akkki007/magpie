@@ -3,6 +3,7 @@ import { notFound, redirect } from "next/navigation";
 
 import { Rail } from "@/components/app/rail";
 import { Topbar } from "@/components/app/topbar";
+import { HistoryPanel } from "@/components/modelling/history-panel";
 import { Workbench } from "@/components/modelling/workbench";
 import { db } from "@/lib/db";
 import { readModel } from "@/lib/model/persist";
@@ -50,7 +51,12 @@ export default async function ModelPage({ params }: PageProps<"/models/[slug]">)
       {/* The canvas: a white document floating on the desk, not a full-bleed page.
           Hairline border, no shadow. */}
       <main className="my-2 flex min-w-0 flex-1 flex-col overflow-hidden rounded-card border border-line bg-surface sm:ml-0">
-        <Topbar workspace="Models" object={model.name} meta="Saved to Postgres" />
+        <Topbar
+          workspace="Models"
+          object={model.name}
+          meta="Saved to Postgres"
+          history={<HistoryPanel slug={slug} />}
+        />
         <Workbench initialModel={model} slug={slug} />
       </main>
     </div>
