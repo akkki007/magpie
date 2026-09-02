@@ -1,10 +1,11 @@
 # Magpie — Modelling Plan
 
-> **Status (2026-09-02): M0 through M3 are built.**
+> **Status (2026-09-02): M0 through M4 are built.**
 >
 > The model lives in Postgres, `/models/[slug]` renders it, edits and formulas are
-> written back through commands, the formula language is complete, and every change is
-> recorded with its inverse, its actor and its time. What exists:
+> written back through commands, the formula language is complete, every change is
+> recorded with its inverse, its actor and its time, and scenarios can be created,
+> branched, edited and compared. What exists:
 >
 > | File | What it is |
 > |---|---|
@@ -18,14 +19,16 @@
 > | `lib/model/commands.ts` | The command bus, in memory — §1.3 |
 > | `lib/model/commands-db.ts` | The same commands, applied to Postgres — M1.1 |
 > | `lib/model/changesets.ts` | The command stream: the log, the undo stack, rollback — M3 |
+> | `lib/model/scenario.ts` | What an override is, and how a branch resolves — M4 |
+> | `lib/model/presets.ts` | Best/worst overlays, with direction measured — M4.4 |
 > | `lib/model/persist.ts` | `writeModel` / `readModel`; the one place a `Decimal` becomes a number |
 > | `prisma/seed-data.ts` | The demo model, in the shape M0's query returns |
 > | `components/modelling/*` | Grid, toolbar, menu, row flattening, formula editor |
 > | `scripts/calc-check.ts` | `bun run calc:check` — aggregation, parser round-trip, validation, golden file |
 > | `scripts/history-check.ts` | `bun run history:check` — inverses, the undo stack, rollback |
 >
-> **M4 is the next thing to build.** Scenarios exist as overlay rows and as a dropdown, but
-> nothing can create, branch or edit one, and there is no comparison view.
+> **M5 is the next thing to build.** Everything the agent needs is in place — typed commands
+> with Zod schemas, batch changesets, validation at the boundary — and nothing calls an LLM.
 >
 > This file replaces `modelling/main.md` and `modelling/brief.md`. Phase M in
 > `learning/path.ts` tracks which tasks Akshay has built and reviewed.
@@ -543,11 +546,60 @@ no status. `origin` **is** there, because who caused a change cannot be reconstr
 
 ### M4 — Scenarios and comparison
 
-**M4.1 — Scenario CRUD** — create, branch from a scenario, rename, delete.
-**M4.2 — Editing inside a scenario** — an edit writes a `ScenarioOverride`, and the grid
-marks overridden cells so "what differs from base" is visible without a diff view.
-**M4.3 — The compare view** — two scenarios side by side, or a delta column.
-**M4.4 — AI forecast presets** — best / base / worst as three generated overlays.
+*M4 is built.*
+
+**An override stopped being a multiplier.** It was enough to *seed* an upside and not enough
+to *edit* one: typing 450 into a downside cell is not a factor, it is a number. It now takes
+the three shapes §4 asks for — `SCALE`, `VALUES` and `FORMULA` — and `value` was already
+`jsonb` for exactly this reason, so the widening is a change to what the column holds rather
+than a migration. `VALUES` carries `null` per period, meaning "not overridden here", which is
+the difference between changing March in the downside and freezing the whole row at whatever
+it happened to be that day.
+
+**Overrides are parsed out of Postgres, not cast.** `jsonb` has no shape the database will
+enforce, so a row written by an older build would otherwise be read as `undefined` deep
+inside the evaluator and quietly become a zero — a wrong number with no trace back to its
+cause. Parsing at the read turns that into a failure where it can still be explained.
+
+**A branch inherits what it does not restate, and the nearest override wins outright.** It
+does not compose with its ancestors: a child that says 450 means 450, not 450 scaled by
+whatever its parent was doing. Composition would make a scenario's numbers depend on edits
+made somewhere the user is not looking.
+
+**M4.1 — Scenario CRUD** — *built*, as four commands on the bus with server-computed
+inverses. Two refusals rather than two silent repairs: the base case cannot be deleted, since
+everything unoverridden falls through to it, and a scenario with branches cannot be deleted,
+since orphaning them into roots is a different model than the one anybody asked for. The base
+case also refuses overrides — that is an edit wearing a disguise, and `SetInput` is the
+command for it.
+**M4.2 — Editing inside a scenario** — *built*, and it is a one-branch change with a large
+consequence. Writing `SetInput` there would edit the base case from a screen that says
+"Downside" at the top: every other scenario would move with it, and §4's question — what
+actually differs between base and downside — would have no answer left. Held cells are marked
+in violet on the number itself, which is the cheapest possible form of "visible without a
+diff view".
+**M4.3 — The compare view** — *built*, as a signed delta under every number rather than the
+other scenario's value beside it. Two numbers in a cell is a lookup table you have to do
+arithmetic on; a number and its difference is the answer to the question a comparison is
+asking. It is a second full evaluation, not a diff of the first — an overlay can replace a
+formula, so there is no arithmetic on the base result that gets you there. Zero renders as a
+dash, because the interesting cells are the ones that moved.
+**M4.4 — Forecast presets** — *built, and deliberately not called AI.* §4 says AI forecasting
+"is then just an agent generating three overlays": the overlays are the product, and who
+generates them is M5. This is a deterministic generator, so the format, the batch and the UI
+are worn in before an agent is pointed at them.
+The interesting part is that **direction is measured rather than guessed**. Raising New
+Accounts helps and raising Churn Rate hurts, and nothing in the schema says so; name-matching
+for "churn" and "cost" is the usual shortcut and breaks the first time someone writes their
+model in another language. So it nudges each input by 1%, re-evaluates, and reads which way
+the objective moved. A driver the objective does not respond to is left out entirely, because
+a preset that touches it claims a relationship that is not there.
+
+**Batches arrived here, for M5's benefit.** The presets write two `CreateScenario` commands as
+one changeset, so a preset arrives and leaves in one undo — §1.4's agent proposals are batches
+by nature, and an "accept" that lands as six separate changesets is an accept the user cannot
+take back in one move. The inverses are read *interleaved* with the applies, because each
+command's before-state is what the previous one left behind.
 
 ### M5 — The agent
 
