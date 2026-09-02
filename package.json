@@ -25,10 +25,13 @@
     "recon:ablate": "bun run scripts/recon-ablate.ts"
   },
   "dependencies": {
+    "@ai-sdk/openai": "^4.0.56",
+    "@ai-sdk/react": "^4.0.93",
     "@prisma/adapter-pg": "^7.10.0",
     "@prisma/client": "^7.10.0",
     "@shikijs/langs": "^4.4.3",
     "@shikijs/themes": "^4.4.3",
+    "ai": "^7.0.90",
     "better-auth": "^1.7.2",
     "dotenv": "^17.4.2",
     "lucide-react": "^1.35.0",

@@ -22,8 +22,6 @@ import { labelFor, type Command } from "@/lib/model/commands";
 import { applyCommandToDb } from "@/lib/model/commands-db";
 import { addComment, listComments, setCommentResolved, type Comment } from "@/lib/model/comments";
 import { readModel } from "@/lib/model/persist";
-import { runAgent as runOpenAiAgent, type AgentStep } from "@/lib/model/openai-agent";
-import { proposeChangeSet } from "@/lib/model/changesets";
 import { getSession } from "@/lib/session";
 
 /**
@@ -337,79 +335,19 @@ export async function rejectModelProposal(slug: string, proposalId: unknown): Pr
 
 
 /**
- * Ask the agent (§5, M5.2, M5.4).
+ * The agent's chat, as one persisted transcript per model (§5, M5.4).
  *
- * The run itself is read-only against Postgres — everything it looks at comes from the
- * `Model` already loaded for the page, not from a fresh query, so a long-running call
- * cannot see a half-written state. Only the very end writes: an `AgentRun` row so a
- * refresh does not lose the transcript, and — only if the model actually proposed
- * something grounded — a `ChangeSet` with status `PROPOSED` that has not touched the
- * model at all. §1.4 again: nothing an LLM does mutates a model directly.
+ * The route handler (`app/(app)/models/[slug]/agent/route.ts`) is what actually talks to
+ * the model — this is only the two reads and the one write its `useChat` transport needs
+ * to survive a refresh. Read here rather than in the route so the page can hydrate
+ * `useChat`'s `messages` before the panel opens, the same way `readModel` hydrates the grid.
  */
-export type AgentProposal = { id: string; label: string; commands: Command[] };
-
-export async function askAgent(
-  slug: string,
-  prompt: unknown,
-): Promise<Result<{ answer: string | null; proposal: AgentProposal | null }>> {
-  const text = z.string().trim().min(1).max(2000).safeParse(prompt);
-  if (!text.success) return { ok: false, error: "Ask it something first." };
-
-  const who = await actor();
-  if (!who) return { ok: false, error: "Your session has expired — sign in again." };
-
-  const model = await readModel(db, slug);
-  if (!model) return { ok: false, error: `No model at ${slug}.` };
-
-  let result: Awaited<ReturnType<typeof runOpenAiAgent>>;
-  try {
-    result = await runOpenAiAgent(model, text.data);
-  } catch (error) {
-    console.error("[askAgent]", error);
-    return {
-      ok: false,
-      error: error instanceof Error ? error.message : "The agent could not be reached.",
-    };
-  }
-
-  const proposalId = result.proposal?.ok ? crypto.randomUUID() : null;
-
-  await withModel(slug, async (tx, modelId) => {
-    if (proposalId && result.proposal?.ok) {
-      await proposeChangeSet(tx, {
-        id: proposalId,
-        modelId,
-        label: result.proposal.label,
-        actor: who,
-        commands: result.proposal.commands,
-      });
-    }
-
-    await tx.agentRun.create({
-      data: {
-        modelId,
-        prompt: text.data,
-        steps: result.steps as unknown as Prisma.InputJsonValue,
-        answer: result.answer,
-        changeSetId: proposalId,
-        actorId: who.id,
-        actorName: who.name,
-      },
-    });
-    return { ok: true };
+export async function readAgentChat(slug: string): Promise<Result<{ messages: unknown[] }>> {
+  return withModel(slug, async (tx, modelId) => {
+    const row = await tx.agentChat.findUnique({ where: { modelId }, select: { messages: true } });
+    return { ok: true, messages: (row?.messages as unknown[] | undefined) ?? [] };
   });
-
-  return {
-    ok: true,
-    answer: result.answer,
-    proposal:
-      proposalId && result.proposal?.ok
-        ? { id: proposalId, label: result.proposal.label, commands: result.proposal.commands }
-        : null,
-  };
 }
-
-export type { AgentStep };
 
 
 /* ── Comments (§6, M6.1) ─────────────────────────────────────────────────*/

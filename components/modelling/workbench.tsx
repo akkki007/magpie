@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 
-import { AgentPanel } from "@/components/modelling/agent-panel";
+import { AgentPanel, type PendingProposal } from "@/components/modelling/agent-panel";
 import { CommentsPanel } from "@/components/modelling/comments-panel";
 import {
   Grid,
@@ -16,7 +16,7 @@ import { flattenRows, isSelectable, type GridRow } from "@/components/modelling/
 import { Toolbar, type ViewOptions } from "@/components/modelling/toolbar";
 import { toast } from "@/components/ui/toast";
 import { Topbar } from "@/components/app/topbar";
-import { persistCommands, redoModel, undoModel, type AgentProposal } from "@/app/(app)/models/actions";
+import { persistCommands, redoModel, undoModel } from "@/app/(app)/models/actions";
 import { applyAll, type Command } from "@/lib/model/commands";
 import { evaluate } from "@/lib/model/engine";
 import { dependentsOf } from "@/lib/model/formula";
@@ -139,7 +139,7 @@ export function Workbench({
   const [formulaEditing, setFormulaEditing] = useState<string | null>(null);
   /** A pending proposal from the agent (§5, M5.3), previewed through the same
    *  `compare` mechanism M4.3 built — see the note by `compare` below. */
-  const [proposal, setProposal] = useState<AgentProposal | null>(null);
+  const [proposal, setProposal] = useState<PendingProposal | null>(null);
   const [adding, setAdding] = useState<string | null>(null);
 
   const scrollRef = useRef<HTMLDivElement>(null);

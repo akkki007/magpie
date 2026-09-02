@@ -270,7 +270,7 @@ model Model {
   scenarios      Scenario[]
   changeSets     ChangeSet[]
   versions       ModelVersion[]
-  agentRuns      AgentRun[]
+  agentChat      AgentChat?
   comments       Comment[]
 
   @@unique([slug])
@@ -487,7 +487,6 @@ model ChangeSet {
   target   ChangeSet? @relation("ChangeSetTarget", fields: [targetId], references: [id])
   reverts  ChangeSet[] @relation("ChangeSetTarget")
   commands Command[]
-  agentRun AgentRun?
 
   @@unique([modelId, seq])
   @@index([modelId, createdAt])
@@ -546,25 +545,26 @@ model Comment {
 /// proposed, if any — a question with no changes ("what would 30% growth do?" answered
 /// without touching the model) has none. Persisted so a refresh does not lose the run,
 /// which the plan calls out by name as the point of this table.
-model AgentRun {
-  id          String     @id @default(uuid())
-  modelId     String
-  prompt      String
-  /// The model's own account of what it did, in order — one entry per tool call plus a
-  /// final entry for its answer. This is the transparency §5 asks the run loop for: the
-  /// outline it read, what it looked up before proposing anything.
-  steps       Json
-  answer      String?
-  changeSetId String?    @unique
-  actorId     String?
-  actorName   String
-  createdAt   DateTime   @default(now())
+/// The agent's chat transcript for one model (§5, M5.4 — superseding AgentRun).
+///
+/// One row per model, holding the whole `UIMessage[]` array `useChat` renders. That is a
+/// wider claim than AgentRun's "steps taken this turn": it is the exact conversation state
+/// the AI SDK's chat UI needs to rehydrate after a refresh, tool-call states and pending
+/// approvals included, rather than a summary reconstructed from a narrower log. A pending
+/// proposal a user has not yet accepted or rejected is real state — losing it on reload
+/// would be losing work, the same way M5.4 named "a refresh does not lose the run" as the
+/// point of persisting anything at all.
+///
+/// Single row per model rather than per user: the panel has always shown one running
+/// thread to whoever has the model open, not a private conversation each person restarts.
+model AgentChat {
+  modelId   String   @id
+  messages  Json
+  updatedAt DateTime @updatedAt
 
-  model     Model      @relation(fields: [modelId], references: [id], onDelete: Cascade)
-  changeSet ChangeSet? @relation(fields: [changeSetId], references: [id])
+  model Model @relation(fields: [modelId], references: [id], onDelete: Cascade)
 
-  @@index([modelId, createdAt])
-  @@map("agent_run")
+  @@map("agent_chat")
 }
 
 /// A named point to come back to (§1.3, M3.3).

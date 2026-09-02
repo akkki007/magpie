@@ -1,5 +1,5 @@
-import OpenAI from "openai";
-import { z } from "zod";
+import { openai } from "@ai-sdk/openai";
+import { tool, type ToolSet } from "ai";
 
 import {
   GetSeriesInput,
@@ -11,27 +11,34 @@ import {
   getVariable,
   groundProposal,
   runScenario,
-  type GroundedProposal,
 } from "./agent-tools";
+import { db } from "@/lib/db";
+
+import { proposeChangeSet } from "./changesets";
+import type { Actor } from "./changesets";
 import type { Model } from "./types";
 
 /**
- * The run loop's provider (`docs/modelling-plan.md` M5.2).
+ * The run loop's provider (`docs/modelling-plan.md` M5.2), on the AI SDK.
  *
  * **This is the only file in the module that knows which vendor answers.** Everything that
  * decides whether a proposal is *safe* — grounding, validation, the cycle check — lives in
  * `agent-tools.ts` with no SDK import, exactly the boundary `lib/recon/adjudicate.ts` draws
- * for reconciliation. That boundary already paid for itself once this session, when the plan
- * specified Claude and the keys available were OpenAI's: the swap touched one file.
+ * for reconciliation. Rebuilding the transport on the AI SDK (M5's "make the UI more
+ * robust" follow-up) touched only this file and the route handler that calls it — the same
+ * property that let the plan's original vendor swap (Claude → OpenAI) touch one file.
  *
- * Chat Completions' tool calling, not the Responses API structured-output helper recon
- * uses — this is a multi-turn loop (read, read again, propose), not one shot at one schema.
+ * Previously a hand-rolled Chat Completions loop; now `streamText` with real tool-call
+ * streaming, so a client using `useChat` sees a tool's input appear as the model writes it
+ * rather than only once the call is complete.
  */
 
 export const DEFAULT_MODEL = process.env.OPENAI_MODEL ?? "gpt-5.6";
-const MAX_TURNS = 12;
+export function agentModel() {
+  return openai(DEFAULT_MODEL);
+}
 
-const SYSTEM_PROMPT = `You are an analyst working inside a financial model.
+export const SYSTEM_PROMPT = `You are an analyst working inside a financial model.
 
 You can read the model's outline, look up a variable, read a series, and try a hypothetical
 batch of commands without saving it (runScenario). runScenario shows you what a change *would* do; it makes nothing real. If the user asks you
@@ -42,6 +49,10 @@ set unless proposeChanges actually returned ok:true earlier in this conversation
 only asked a question with no request to change anything, answer in words and call no write
 tool. When asked for "a scenario", create one with CreateScenario rather than overriding the
 base case directly — the base case never takes an override, and SetOverride on it is refused.
+
+A successful proposeChanges is staged for a human to accept or reject — say what you
+proposed, in one sentence, and then stop. You do not know whether it has been accepted yet;
+never claim it has been applied.
 
 Ground every reference in what getModelOutline actually returned. Never invent a variable id.
 If a variable you need does not exist, create it with InsertVariable in the same batch that
@@ -64,149 +75,73 @@ exact field to fix — do not repeat the same shape a second time.
 
 Keep your final answer short — a sentence or two a finance person would actually read.`;
 
-export type AgentStep =
-  | { kind: "tool"; name: string; args: unknown; result: unknown }
-  | { kind: "answer"; text: string };
+/**
+ * The tool set, bound to one loaded model and one actor.
+ *
+ * Built fresh per request rather than as a module-level singleton (the shape a
+ * `ToolLoopAgent` invites): every call is scoped to a specific model's data and a specific
+ * signed-in user, and closing over those here is what lets `proposeChanges`'s `execute`
+ * write a `ChangeSet` under the right `modelId` and the right actor without threading them
+ * through every tool call by hand.
+ */
+export function buildAgentTools(args: { model: Model; modelId: string; actor: Actor }): ToolSet {
+  const { model, modelId, actor } = args;
 
-export type AgentResult = {
-  steps: AgentStep[];
-  answer: string | null;
-  proposal: GroundedProposal | null;
-};
+  return {
+    getModelOutline: tool({
+      description:
+        "The model's groups, variables (with printed formulas), dimensions and scenarios. No series values — call getSeries for those. Always call this first.",
+      inputSchema: GetVariableInput.omit({ variableId: true }),
+      execute: async () => getModelOutline(model),
+    }),
 
-const READ_TOOLS = [
-  {
-    type: "function" as const,
-    function: {
-      name: "getModelOutline",
-      description: "The model's groups, variables (with printed formulas), dimensions and scenarios. No series values — call getSeries for those. Always call this first.",
-      parameters: { type: "object", properties: {}, additionalProperties: false },
-    },
-  },
-  {
-    type: "function" as const,
-    function: {
-      name: "getVariable",
+    getVariable: tool({
       description: "Full detail on one variable, by id.",
-      parameters: z.toJSONSchema(GetVariableInput),
-    },
-  },
-  {
-    type: "function" as const,
-    function: {
-      name: "getSeries",
-      description: "The evaluated monthly series for one variable, optionally under a scenario or a dimension member.",
-      parameters: z.toJSONSchema(GetSeriesInput),
-    },
-  },
-  {
-    type: "function" as const,
-    function: {
-      name: "runScenario",
-      description: "Try a batch of commands in memory and see what moves, WITHOUT saving anything. Use this to check your arithmetic before proposing.",
-      parameters: z.toJSONSchema(RunScenarioInput),
-    },
-  },
-  {
-    type: "function" as const,
-    function: {
-      name: "proposeChanges",
-      description: "The one real write. A batch of commands, applied together as one changeset once a human accepts it. Call this at most once.",
-      parameters: z.toJSONSchema(ProposeChangesInput),
-    },
-  },
-];
+      inputSchema: GetVariableInput,
+      execute: async (input) => getVariable(model, input),
+    }),
 
-export async function runAgent(model: Model, prompt: string): Promise<AgentResult> {
-  const client = new OpenAI();
-  const steps: AgentStep[] = [];
-  let proposal: GroundedProposal | null = null;
+    getSeries: tool({
+      description:
+        "The evaluated monthly series for one variable, optionally under a scenario or a dimension member.",
+      inputSchema: GetSeriesInput,
+      execute: async (input) => getSeries(model, input),
+    }),
 
-  const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [
-    { role: "system", content: SYSTEM_PROMPT },
-    { role: "user", content: prompt },
-  ];
+    runScenario: tool({
+      description:
+        "Try a batch of commands in memory and see what moves, WITHOUT saving anything. Use this to check your arithmetic before proposing.",
+      inputSchema: RunScenarioInput,
+      execute: async (input) => runScenario(model, input),
+    }),
 
-  for (let turn = 0; turn < MAX_TURNS; turn++) {
-    const response = await client.chat.completions.create({
-      model: DEFAULT_MODEL,
-      messages,
-      tools: READ_TOOLS,
-      // Once a proposal exists there is nothing left to do — forcing "none" here is what
-      // keeps "call this at most once" a guarantee rather than a request the model can
-      // ignore on the next turn.
-      tool_choice: proposal ? "none" : "auto",
-    });
+    /**
+     * The one real write — but "real" still means "staged", never "applied" (§1.4).
+     *
+     * A grounded proposal is persisted as a `ChangeSet` with status `PROPOSED`, exactly
+     * what `askAgent` did before the transport moved to `streamText` — that persistence,
+     * and the accept/reject actions that resolve it, are untouched by this rewrite.
+     */
+    proposeChanges: tool({
+      description:
+        "The one real write. A batch of commands, staged for a human to accept or reject. Call this at most once.",
+      inputSchema: ProposeChangesInput,
+      execute: async (input) => {
+        const grounded = groundProposal(model, input);
+        if (!grounded.ok) return grounded;
 
-    const message = response.choices[0]?.message;
-    if (!message) break;
-    messages.push(message);
-
-    const calls = message.tool_calls ?? [];
-    if (calls.length === 0) {
-      const text = message.content ?? "";
-      steps.push({ kind: "answer", text });
-      return { steps, answer: text, proposal };
-    }
-
-    for (const call of calls) {
-      // The SDK's tool-call type is a union with a "custom" (non-function) variant this
-      // loop never asks for — every tool above is declared `type: "function"`, so a call
-      // that is anything else would be the SDK responding to a request we did not make.
-      if (call.type !== "function") continue;
-
-      const args: unknown = safeParseJson(call.function.arguments);
-      const result = runTool(model, call.function.name, args);
-      // Only a *successful* grounding stops the loop — see the `tool_choice` comment
-      // above. A failed attempt is fed back as tool output below so the model can
-      // correct a bad id or a bad formula and try again within the turn budget.
-      if (call.function.name === "proposeChanges" && isGroundedProposal(result) && result.ok) {
-        proposal = result;
-      }
-      steps.push({ kind: "tool", name: call.function.name, args, result });
-      messages.push({
-        role: "tool",
-        tool_call_id: call.id,
-        // Grounding failures go back to the model as tool output, not as an exception —
-        // the whole point is giving it a chance to correct a hallucinated id, not ending
-        // the run the first time it gets something wrong.
-        content: JSON.stringify(result),
-      });
-    }
-  }
-
-  return { steps, answer: null, proposal };
-}
-
-function runTool(model: Model, name: string, args: unknown): unknown {
-  try {
-    switch (name) {
-      case "getModelOutline":
-        return getModelOutline(model);
-      case "getVariable":
-        return getVariable(model, GetVariableInput.parse(args));
-      case "getSeries":
-        return getSeries(model, GetSeriesInput.parse(args));
-      case "runScenario":
-        return runScenario(model, RunScenarioInput.parse(args));
-      case "proposeChanges":
-        return groundProposal(model, ProposeChangesInput.parse(args));
-      default:
-        return { error: `Unknown tool ${name}` };
-    }
-  } catch (error) {
-    return { error: error instanceof Error ? error.message : "That call failed." };
-  }
-}
-
-function safeParseJson(text: string): unknown {
-  try {
-    return JSON.parse(text);
-  } catch {
-    return { error: "The arguments were not valid JSON." };
-  }
-}
-
-function isGroundedProposal(value: unknown): value is GroundedProposal {
-  return typeof value === "object" && value !== null && "ok" in value;
+        const proposalId = crypto.randomUUID();
+        await db.$transaction((tx) =>
+          proposeChangeSet(tx, {
+            id: proposalId,
+            modelId,
+            label: grounded.label,
+            actor,
+            commands: grounded.commands,
+          }),
+        );
+        return { ok: true, proposalId, label: grounded.label, commandCount: grounded.commands.length };
+      },
+    }),
+  };
 }
