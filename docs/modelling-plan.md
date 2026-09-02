@@ -647,18 +647,28 @@ forbids, a proposal that compiles but cannot land. Fixed in the gate itself, pin
 **M5.1 — Zod command schemas → tool definitions** — *built.* `z.toJSONSchema` on the same
 `CommandSchema` the network boundary already validates against, so the tool the model calls
 and the schema the server enforces cannot drift into two definitions of a legal command.
-**M5.2 — The run loop** — *built*, against OpenAI (the keys available), tool calling over
-Chat Completions rather than Claude's tool-use API — the same swap R4's adjudication tier
-made, for the same reason. Outline + targeted reads, never the full data: the outline is
-names, kinds and printed formulas, never a series.
+**M5.2 — The run loop** — *built*, against OpenAI (the keys available), on the AI SDK's
+`streamText` with real tool-call streaming rather than a hand-rolled Chat Completions loop —
+a follow-up rebuild once the panel needed to feel properly interactive. Outline + targeted
+reads, never the full data: the outline is names, kinds and printed formulas, never a series.
+The transport is a streaming route handler (`[slug]/agent/route.ts`), not a server action:
+`useChat` wants a streaming HTTP response, and a server action's single return value is the
+shape this moved away from.
 **M5.3 — Proposals** — *built.* A pending proposal is previewed through the exact
 delta-under-every-number mechanism M4.3 built for comparing scenarios, rather than a second
 visual language for the same idea — "ghost overlay beside current ones" turns out to already
 look like the compare view once one exists. No separate Accept all / Undo all / Compare bar;
 Accept and Reject live on the proposal itself in the agent panel, since a run only ever
-proposes one changeset.
-**M5.4 — Persisted transcripts** — *built.* `AgentRun` holds the prompt, the tool-call
-sequence and the answer, so a refresh does not lose the run.
+proposes one changeset. **Deliberately not on the AI SDK's own tool-approval feature** —
+`proposeChanges`'s tool `execute` stages a `ChangeSet` with status `PROPOSED` exactly as
+before, and Accept/Reject are the same tested actions, independent of chat transport. The
+SDK's `toolApproval` would gate execution on a client-confirmed approval carried in the
+message history instead — a second definition of "the user said yes" living beside the one
+already tested, and two competing definitions of the same fact is how one goes stale.
+**M5.4 — Persisted transcripts** — *built*, on an `AgentChat` row (the whole `UIMessage[]`
+`useChat` needs to rehydrate) rather than `AgentRun`'s per-turn step log — richer, since it
+round-trips tool-call states and a pending proposal exactly rather than summarising them,
+which is what "a refresh does not lose the run" actually asked for.
 
 *Not built:* `searchDataSources`. It reads `DataSource` rows M7 has not created, and a tool
 over a table that does not exist is not a smaller version of the feature — it is a broken
