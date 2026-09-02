@@ -2,17 +2,22 @@
 
 import { z } from "zod";
 
+import type { Prisma } from "@/lib/generated/prisma/client";
 import { db } from "@/lib/db";
 import {
   commandsOf,
   historyStacks,
   inverseFromDb,
   readHistory,
+  readVersions,
   recordChangeSet,
+  rollback,
   type HistoryEntry,
+  type VersionEntry,
 } from "@/lib/model/changesets";
 import { CommandSchema } from "@/lib/model/command-schema";
 import { labelFor, type Command } from "@/lib/model/commands";
+import { readModel } from "@/lib/model/persist";
 import { getSession } from "@/lib/session";
 
 /**
@@ -190,15 +195,91 @@ async function move(
 
 export async function readModelHistory(
   slug: string,
-): Promise<Result<{ entries: HistoryEntry[]; canUndo: boolean; canRedo: boolean }>> {
+): Promise<
+  Result<{
+    entries: HistoryEntry[];
+    versions: VersionEntry[];
+    canUndo: boolean;
+    canRedo: boolean;
+  }>
+> {
   return withModel(slug, async (tx, modelId) => {
     const entries = await readHistory(tx, modelId);
     const stacks = historyStacks(entries);
     return {
       ok: true,
       entries,
+      versions: await readVersions(tx, modelId),
       canUndo: stacks.undo.length > 0,
       canRedo: stacks.redo.length > 0,
     };
+  });
+}
+
+/**
+ * Cut a version (M3.3).
+ *
+ * §1.3: "a version is a snapshot plus the commands since it". The snapshot is the whole
+ * model as the engine sees it, and `seq` is where in the stream it was taken — the two
+ * together are what make a rollback checkable rather than merely hopeful.
+ */
+export async function createVersion(slug: string, rawLabel: unknown): Promise<Result> {
+  const label = z.string().trim().min(1).max(120).safeParse(rawLabel);
+  if (!label.success) return { ok: false, error: "A version needs a name." };
+
+  return withModel(slug, async (tx, modelId, who) => {
+    const model = await readModel(tx, slug);
+    if (!model) return { ok: false, error: `No model at ${slug}.` };
+
+    const head = await tx.changeSet.findFirst({
+      where: { modelId },
+      orderBy: { seq: "desc" },
+      select: { seq: true },
+    });
+
+    await tx.modelVersion.create({
+      data: {
+        modelId,
+        seq: head?.seq ?? 0,
+        label: label.data,
+        snapshot: model as unknown as Prisma.InputJsonValue,
+        actorId: who.id,
+        actorName: who.name,
+      },
+    });
+    return { ok: true };
+  });
+}
+
+/** Thin plumbing over `rollback` — the mechanism, and the reason it verifies, live there. */
+export async function rollbackTo(
+  slug: string,
+  versionId: unknown,
+  changeSetId: unknown,
+): Promise<Result> {
+  const version = z.uuid().safeParse(versionId);
+  const id = Id.safeParse(changeSetId);
+  if (!version.success || !id.success) {
+    return { ok: false, error: "That request was not in a form the server could accept." };
+  }
+
+  return withModel(slug, async (tx, modelId, who) => {
+    const target = await tx.modelVersion.findFirst({
+      where: { id: version.data, modelId },
+      select: { seq: true, label: true, snapshot: true },
+    });
+    if (!target) return { ok: false, error: "That version is not part of this model." };
+
+    const result = await rollback(tx, {
+      modelId,
+      slug,
+      changeSetId: id.data,
+      actor: who,
+      version: target,
+    });
+    // Thrown, not returned: `withModel` runs inside a transaction, and only a throw discards
+    // the writes the replay already made. Returning would leave a half-rollback applied.
+    if (!result.ok) throw new Error(`${result.error} Nothing was changed.`);
+    return { ok: true };
   });
 }

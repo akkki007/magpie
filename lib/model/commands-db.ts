@@ -31,7 +31,27 @@ async function periodDate(tx: Tx, modelId: string, index: number): Promise<Date 
   return period ? new Date(Date.UTC(period.year, period.month - 1, 1)) : null;
 }
 
-export async function applyCommandToDb(tx: Tx, modelId: string, command: Command): Promise<void> {
+/**
+ * `validate` guards *intent*, not state transitions.
+ *
+ * A person typing a formula and an agent proposing one are both making a claim about what the
+ * model should be, and §5 says a claim that does not compile never lands. Replaying recorded
+ * history is not a claim: an undo, a redo and a rollback are restoring a state the model was
+ * already in, and every command in the log passed this gate when it was first applied.
+ *
+ * The distinction is not academic — `history-check` found it. Deleting `Price` and then
+ * deleting `Sales`, whose formula reads `Price`, is allowed: the engine reads a missing
+ * reference as zero, and the client only warns. But undoing the second delete restores a
+ * formula pointing at a variable that is currently gone, and the gate refused it. An undo
+ * that can be refused is not an undo, and the state it was refusing to restore was one the
+ * product had already permitted.
+ */
+export async function applyCommandToDb(
+  tx: Tx,
+  modelId: string,
+  command: Command,
+  { validate = true }: { validate?: boolean } = {},
+): Promise<void> {
   switch (command.type) {
     case "SetInput": {
       const period = await periodDate(tx, modelId, command.period);
@@ -137,7 +157,7 @@ export async function applyCommandToDb(tx: Tx, modelId: string, command: Command
         },
       });
 
-      if (variable.formula) {
+      if (validate && variable.formula) {
         // The same gate as SetFormula, with the new row present in the context
         // so a formula that reads its own new variable is reported as a cycle
         // rather than as a missing name.
@@ -154,7 +174,9 @@ export async function applyCommandToDb(tx: Tx, modelId: string, command: Command
           variable.id,
         );
         if (invalid) throw new Error(invalid.message);
+      }
 
+      if (variable.formula) {
         for (const node of flattenFormula(variable.formula, variable.id)) {
           await tx.formulaNode.create({ data: { ...node, variableId: variable.id } });
         }

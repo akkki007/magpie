@@ -275,16 +275,21 @@ export async function readValidationContext(
   tx: Prisma.TransactionClient | PrismaClient,
   modelId: string,
 ): Promise<ValidationContext> {
-  const [variables, dimensions] = await Promise.all([
-    tx.variable.findMany({
-      where: { modelId },
-      select: { id: true, name: true, dimensionId: true, formula: true },
-    }),
-    tx.dimension.findMany({
-      where: { variables: { some: { modelId } } },
-      select: { id: true, name: true, members: { select: { key: true, name: true }, orderBy: { order: "asc" } } },
-    }),
-  ]);
+  // Sequential, not `Promise.all`. This runs inside a transaction, and a transaction is one
+  // connection: two queries in flight on it at once is what `pg` deprecates and what a future
+  // major version removes. One extra round trip on a write path is not worth that.
+  const variables = await tx.variable.findMany({
+    where: { modelId },
+    select: { id: true, name: true, dimensionId: true, formula: true },
+  });
+  const dimensions = await tx.dimension.findMany({
+    where: { variables: { some: { modelId } } },
+    select: {
+      id: true,
+      name: true,
+      members: { select: { key: true, name: true }, orderBy: { order: "asc" } },
+    },
+  });
 
   return {
     variables: variables.map((v) => ({
@@ -336,7 +341,15 @@ function rebuild(rows: { id: string; parentId: string | null; type: string; op: 
   return root ? build(root) : undefined;
 }
 
-export async function readModel(db: PrismaClient, slug: string): Promise<Model | null> {
+/**
+ * Accepts a transaction client as well as the root one, because M3.3's rollback has to read
+ * the model back *inside* its own transaction — the writes it is checking are not committed
+ * yet, and a read on the root client would not see them.
+ */
+export async function readModel(
+  db: Prisma.TransactionClient | PrismaClient,
+  slug: string,
+): Promise<Model | null> {
   const row = await db.model.findUnique({
     where: { slug },
     include: {

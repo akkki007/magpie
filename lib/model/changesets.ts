@@ -2,7 +2,7 @@ import type { Prisma } from "@/lib/generated/prisma/client";
 
 import type { Command } from "./commands";
 import { applyCommandToDb } from "./commands-db";
-import { periodsBetween, rebuildFormula } from "./persist";
+import { periodsBetween, readModel, rebuildFormula } from "./persist";
 import { TOTAL } from "./types";
 
 /**
@@ -171,7 +171,10 @@ export async function recordChangeSet(
   },
 ): Promise<void> {
   for (const { command } of args.commands) {
-    await applyCommandToDb(tx, args.modelId, command);
+    // Only an EDIT carries new intent — see the note on `applyCommandToDb`. An UNDO, REDO or
+    // ROLLBACK replays commands that were validated when they were first written, and
+    // refusing one would mean an undo that sometimes does not work.
+    await applyCommandToDb(tx, args.modelId, command, { validate: args.kind === "EDIT" });
   }
 
   await tx.changeSet.create({
@@ -208,6 +211,123 @@ export async function commandsOf(tx: Tx, changeSetId: string) {
     command: row.payload as unknown as Command,
     inverse: row.inverse as unknown as Command,
   }));
+}
+
+/* ── Versions and rollback (M3.3) ─────────────────────────────────────────*/
+
+export type VersionEntry = {
+  id: string;
+  seq: number;
+  label: string;
+  actorName: string;
+  createdAt: string;
+};
+
+export async function readVersions(tx: Tx, modelId: string): Promise<VersionEntry[]> {
+  const rows = await tx.modelVersion.findMany({
+    where: { modelId },
+    orderBy: { seq: "desc" },
+    select: { id: true, seq: true, label: true, actorName: true, createdAt: true },
+  });
+  return rows.map((row) => ({ ...row, createdAt: row.createdAt.toISOString() }));
+}
+
+/**
+ * Every changeset written after `seq`, newest first, with the commands it
+ * applied — which is exactly the list a rollback has to undo.
+ *
+ * All kinds are included, undos among them. A rollback is not "undo the edits";
+ * it is "return the model to the state it was in at that point", and an undo
+ * changed the model as surely as an edit did. This is why `UNDO` and `REDO`
+ * store the commands they applied rather than only pointing at a target: it
+ * makes this loop uniform over every kind.
+ */
+export async function changesSince(tx: Tx, modelId: string, seq: number) {
+  const rows = await tx.changeSet.findMany({
+    where: { modelId, seq: { gt: seq } },
+    orderBy: { seq: "desc" },
+    select: { id: true, seq: true, label: true, commands: { orderBy: { order: "asc" }, select: { payload: true, inverse: true } } },
+  });
+  return rows.map((row) => ({
+    id: row.id,
+    seq: row.seq,
+    label: row.label,
+    commands: row.commands.map((c) => ({
+      command: c.payload as unknown as Command,
+      inverse: c.inverse as unknown as Command,
+    })),
+  }));
+}
+
+/**
+ * Return a model to the state a version recorded (M3.3).
+ *
+ * **The snapshot is the check, not the mechanism.** Writing it back over the tables would be
+ * two lines and would leave a hole in the log where nobody can see what changed. Instead
+ * every changeset written after the version is replayed backwards — its stored inverses, in
+ * reverse order — and the result is *then* compared to the snapshot. If the two disagree,
+ * some command was not honestly invertible, and the caller's transaction is abandoned rather
+ * than landing the model somewhere nobody named. A rollback that quietly half-works is worse
+ * than one that refuses.
+ *
+ * The rollback is itself a changeset, so it appears in history with an actor and can be
+ * undone like anything else.
+ */
+export async function rollback(
+  tx: Tx,
+  args: {
+    modelId: string;
+    slug: string;
+    changeSetId: string;
+    actor: Actor;
+    version: { seq: number; label: string; snapshot: unknown };
+  },
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const since = await changesSince(tx, args.modelId, args.version.seq);
+  if (since.length === 0) {
+    return { ok: false, error: `The model is already at "${args.version.label}".` };
+  }
+
+  // Newest changeset first, and each one's commands reversed within it: undoing a batch
+  // means undoing its last step first.
+  await recordChangeSet(tx, {
+    id: args.changeSetId,
+    modelId: args.modelId,
+    kind: "ROLLBACK",
+    label: `Roll back to ${args.version.label}`,
+    actor: args.actor,
+    commands: since.flatMap((change) =>
+      [...change.commands].reverse().map(({ command, inverse }) => ({
+        command: inverse,
+        inverse: command,
+      })),
+    ),
+  });
+
+  const now = await readModel(tx, args.slug);
+  if (!now || !identical(now, args.version.snapshot)) {
+    return {
+      ok: false,
+      error: `Rolling back to "${args.version.label}" did not reproduce that version.`,
+    };
+  }
+  return { ok: true };
+}
+
+/** Key order is not meaning; `undefined` and an absent key are the same absence. */
+function identical(a: unknown, b: unknown) {
+  const canonical = (value: unknown): unknown =>
+    Array.isArray(value)
+      ? value.map(canonical)
+      : value && typeof value === "object"
+        ? Object.fromEntries(
+            Object.entries(value as Record<string, unknown>)
+              .filter(([, v]) => v !== undefined)
+              .sort(([x], [y]) => x.localeCompare(y))
+              .map(([k, v]) => [k, canonical(v)]),
+          )
+        : value;
+  return JSON.stringify(canonical(a)) === JSON.stringify(canonical(b));
 }
 
 /* ── The inverse of a command, from what is currently stored ──────────────*/

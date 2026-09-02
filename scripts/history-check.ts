@@ -19,7 +19,9 @@
  */
 import { db } from "../lib/db";
 import {
+  changesSince,
   commandsOf,
+  rollback,
   historyStacks,
   inverseFromDb,
   readHistory,
@@ -53,6 +55,21 @@ const canonical = (value: unknown): unknown =>
       : value;
 const same = (a: unknown, b: unknown) =>
   JSON.stringify(canonical(a)) === JSON.stringify(canonical(b));
+
+/** Where two models first differ, so a failure names the field instead of dumping both. */
+function firstDifference(a: unknown, b: unknown, path = ""): string {
+  const left = canonical(a) as Record<string, unknown>;
+  const right = canonical(b) as Record<string, unknown>;
+  if (JSON.stringify(left) === JSON.stringify(right)) return "";
+  if (typeof left !== "object" || typeof right !== "object" || !left || !right) {
+    return `${path}: ${JSON.stringify(left)} vs ${JSON.stringify(right)}`;
+  }
+  for (const key of new Set([...Object.keys(left), ...Object.keys(right)])) {
+    const deeper = firstDifference(left[key], right[key], path ? `${path}.${key}` : key);
+    if (deeper) return deeper;
+  }
+  return path;
+}
 
 const SLUG = "history-check-scratch";
 const ACTOR = { id: null, name: "history-check" };
@@ -249,6 +266,119 @@ console.log("\nServer state vs the client's own copy");
     `${JSON.stringify(series(local))} vs ${JSON.stringify(series(await load()))}`,
   );
   check("the log agrees on the order", same(historyStacks(await db.$transaction((tx) => readHistory(tx, modelId))).undo, ids));
+}
+
+/* ── 4. Versions and rollback (M3.3) ─────────────────────────────────────*/
+
+console.log("\nRollback");
+{
+  await writeModel(db, FIXTURE, SLUG);
+
+  const before = await load();
+  const head = await db.changeSet.findFirst({ where: { modelId }, orderBy: { seq: "desc" }, select: { seq: true } });
+  const version = await db.modelVersion.create({
+    data: {
+      modelId,
+      seq: head?.seq ?? 0,
+      label: "Before the mess",
+      snapshot: before as never,
+      actorId: null,
+      actorName: "history-check",
+    },
+  });
+
+  // A deliberately awkward sequence: an edit, a formula change, a delete, and an
+  // undo in the middle of it. The undo is the interesting one — a rollback that
+  // only reversed "edits" would leave it applied and land somewhere nobody named.
+  await edit({ type: "SetInput", variableId: "hc_units", member: TOTAL, period: 0, value: 500 });
+  const swapped = await edit({ type: "SetFormula", variableId: "hc_sales", formula: ref("hc_units") });
+  await db.$transaction(async (tx) => {
+    const commands = await commandsOf(tx, swapped);
+    await recordChangeSet(tx, {
+      id: crypto.randomUUID(),
+      modelId,
+      kind: "UNDO",
+      label: "Undo edit formula",
+      actor: ACTOR,
+      targetId: swapped,
+      commands: [...commands].reverse().map(({ command, inverse }) => ({ command: inverse, inverse: command })),
+    });
+  });
+  await edit({ type: "RemoveVariable", variableId: "hc_price" });
+  await edit({ type: "RenameVariable", variableId: "hc_units", name: "Quantity" });
+
+  // An undone *delete*, which is what makes this scenario able to tell a correct
+  // rollback from a plausible one. Every other command sets an absolute value, so
+  // replaying it twice lands in the same place and a rollback that skipped the
+  // undos would still look right. Insert and remove are not idempotent: skip the
+  // undo below and the replay tries to insert a row that is already there.
+  const deleted = await edit({ type: "RemoveVariable", variableId: "hc_sales" });
+  await db.$transaction(async (tx) => {
+    const commands = await commandsOf(tx, deleted);
+    await recordChangeSet(tx, {
+      id: crypto.randomUUID(),
+      modelId,
+      kind: "UNDO",
+      label: "Undo delete variable",
+      actor: ACTOR,
+      targetId: deleted,
+      commands: [...commands].reverse().map(({ command, inverse }) => ({ command: inverse, inverse: command })),
+    });
+  });
+
+  const messy = await load();
+  check("the model really did move", !same(messy, before));
+  check("a variable was deleted along the way", messy.variables.length === 2, `${messy.variables.length}`);
+
+  const changes = await db.$transaction((tx) => changesSince(tx, modelId, version.seq));
+  check("seven changesets since the version, both undos included", changes.length === 7, `${changes.length}`);
+
+  const rolled = await db.$transaction((tx) =>
+    rollback(tx, {
+      modelId,
+      slug: SLUG,
+      changeSetId: crypto.randomUUID(),
+      actor: ACTOR,
+      version: { seq: version.seq, label: version.label, snapshot: before },
+    }),
+  );
+  check("the rollback reported success", rolled.ok, rolled.ok ? "" : rolled.error);
+
+  const restored = await load();
+  check(
+    "replaying the inverses reproduces the snapshot exactly",
+    same(restored, before),
+    firstDifference(restored, before),
+  );
+  check("the deleted variable came back with its inputs", same(restored.inputs.hc_price, before.inputs.hc_price));
+
+  const log = await db.$transaction((tx) => readHistory(tx, modelId));
+  check("the rollback is in the log with an actor", log[0]?.kind === "ROLLBACK" && log[0]?.actorName === "history-check");
+  check("nothing was deleted to achieve it", log.length === 8, `${log.length}`);
+
+  const stacks = historyStacks(log);
+  check("the rollback itself can be undone", stacks.undo.at(-1) === log[0]?.id);
+
+  // The snapshot is the check, so a snapshot that does not match what the replay produces
+  // has to be refused rather than accepted quietly. Nothing in the product can produce a
+  // wrong snapshot today — which is exactly why the refusal needs testing here.
+  await edit({ type: "SetInput", variableId: "hc_units", member: TOTAL, period: 0, value: 4242 });
+  const lied = await db
+    .$transaction(async (tx) =>
+      rollback(tx, {
+        modelId,
+        slug: SLUG,
+        changeSetId: crypto.randomUUID(),
+        actor: ACTOR,
+        version: {
+          seq: version.seq,
+          label: "A snapshot that never was",
+          snapshot: { ...before, name: "Something else entirely" },
+        },
+      }),
+    )
+    .catch((error: unknown) => ({ ok: false as const, error: String(error) }));
+  check("a replay that does not reproduce the snapshot is refused", !lied.ok, lied.ok ? "accepted" : "");
 }
 
 await db.model.delete({ where: { slug: SLUG } });
