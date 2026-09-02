@@ -375,7 +375,8 @@ export function Grid({
           const isMember = row.kind === "member";
           const error = evaluation.errors[variable.id];
           const values = valuesByRow.get(row.key) ?? [];
-          const monthly = evaluation.series(variable.id, isMember ? row.member.key : TOTAL);
+          const member = isMember ? row.member.key : TOTAL;
+          const monthly = evaluation.series(variable.id, member);
           const editable = variable.kind === "INPUT" && view.grain === "MONTH";
           const traced = tracedIds?.has(variable.id) ?? false;
           const isTraceTarget = trace === variable.id;
@@ -617,6 +618,12 @@ export function Grid({
                 const isEditing =
                   editing?.rowKey === row.key && editing.column === column;
                 const value = values[column] ?? 0;
+                // Which cells the active scenario is holding (M4.2). §4's promise is that
+                // "what differs from base" is visible without opening a diff view, and a
+                // marked cell is the cheapest form of that: the answer is on the number.
+                const held =
+                  view.grain === "MONTH" &&
+                  evaluation.isOverridden(variable.id, member, bucket.from);
 
                 return (
                   <td
@@ -631,8 +638,11 @@ export function Grid({
                       editable ? "cursor-cell" : "cursor-default",
                       isSelected
                         ? "bg-surface shadow-[inset_0_0_0_1.5px_var(--color-blue-600)] group-hover:bg-surface"
-                        : "bg-surface group-hover:bg-hover",
+                        : held
+                          ? "bg-violet-50 group-hover:bg-violet-100"
+                          : "bg-surface group-hover:bg-hover",
                     )}
+                    title={held ? "Held by this scenario" : undefined}
                   >
                     {isEditing ? (
                       <CellInput
@@ -648,6 +658,7 @@ export function Grid({
                         className={cn(
                           value === 0 && "text-ink-faint",
                           value < 0 && "text-neg-fg",
+                          held && "text-violet-700",
                         )}
                       >
                         {formatValue(value, variable.format)}

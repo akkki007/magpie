@@ -1,19 +1,24 @@
 "use client";
 
+import { useState } from "react";
 import {
   ChevronsDownUp,
   ChevronsUpDown,
   GitBranch,
+  Pencil,
+  Plus,
   Redo2,
   Search,
   SlidersHorizontal,
+  Trash2,
   Undo2,
   X,
 } from "lucide-react";
 
-import { Menu, MenuChoice, MenuLabel, MenuSeparator } from "@/components/modelling/menu";
+import { Menu, MenuChoice, MenuItem, MenuLabel, MenuSeparator } from "@/components/modelling/menu";
 import { cn } from "@/lib/cn";
 import { AGGREGATION_LABEL } from "@/lib/model/grain";
+import { scenarioTree } from "@/lib/model/scenario";
 import type { Grain, Scenario } from "@/lib/model/types";
 
 export type ViewOptions = {
@@ -35,6 +40,9 @@ export function Toolbar({
   scenarios,
   scenarioId,
   onScenarioChange,
+  onScenarioCreate,
+  onScenarioRename,
+  onScenarioDelete,
   view,
   onViewChange,
   allCollapsed,
@@ -49,6 +57,10 @@ export function Toolbar({
   scenarios: Scenario[];
   scenarioId: string;
   onScenarioChange: (id: string) => void;
+  /** `parentId` is what the new scenario branches from — the base, or the current one. */
+  onScenarioCreate: (parentId: string | null) => void;
+  onScenarioRename: (scenarioId: string, name: string) => void;
+  onScenarioDelete: (scenarioId: string) => void;
   view: ViewOptions;
   onViewChange: (next: ViewOptions) => void;
   allCollapsed: boolean;
@@ -60,6 +72,12 @@ export function Toolbar({
 }) {
   const scenario = scenarios.find((s) => s.id === scenarioId);
   const isBase = scenario?.isBase ?? true;
+  const baseId = scenarios.find((s) => s.isBase)?.id;
+
+  // Renaming happens inside the open menu rather than in a dialog: it is a two-word edit,
+  // and the list it belongs to is the thing you are looking at while you do it.
+  const [renaming, setRenaming] = useState<string | null>(null);
+  const [draft, setDraft] = useState("");
 
   return (
     <div className="flex h-12 shrink-0 items-center gap-2 border-b border-line px-3">
@@ -117,7 +135,7 @@ export function Toolbar({
 
       <Menu
         align="end"
-        width={224}
+        width={264}
         ariaLabel="Scenario"
         triggerClassName={cn(
           "inline-flex h-8 shrink-0 items-center gap-1.5 rounded-button px-2.5 text-[13px] font-medium",
@@ -138,26 +156,105 @@ export function Toolbar({
         {({ close }) => (
           <>
             <MenuLabel>Scenario</MenuLabel>
-            {scenarios.map((option) => (
+            {scenarioTree(scenarios).map(({ scenario: option, depth }) => (
               <MenuChoice
                 key={option.id}
                 selected={option.id === scenarioId}
                 hint={
-                  option.overrides.length
-                    ? `${option.overrides.length} override${option.overrides.length > 1 ? "s" : ""}`
-                    : "Base"
+                  option.isBase
+                    ? "Base"
+                    : option.overrides.length
+                      ? `${option.overrides.length} override${option.overrides.length > 1 ? "s" : ""}`
+                      : "No changes"
                 }
                 onSelect={() => {
                   onScenarioChange(option.id);
                   close();
                 }}
               >
-                {option.name}
+                {/* Indent, not a tree line: the depth is almost always one, and drawing
+                    connectors for that would be more chrome than information. */}
+                <span style={{ paddingLeft: depth * 12 }}>{option.name}</span>
               </MenuChoice>
             ))}
+
+            <MenuSeparator />
+
+            {renaming ? (
+              <form
+                className="flex items-center gap-1 px-1 py-0.5"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  const next = draft.trim();
+                  if (next && next !== scenario?.name) onScenarioRename(renaming, next);
+                  setRenaming(null);
+                }}
+              >
+                <input
+                  autoFocus
+                  value={draft}
+                  onChange={(event) => setDraft(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Escape") {
+                      event.stopPropagation();
+                      setRenaming(null);
+                    }
+                  }}
+                  aria-label="Scenario name"
+                  className="h-7 w-full rounded-button border border-blue-400 bg-canvas px-1.5 text-[13px] text-ink outline-none"
+                />
+              </form>
+            ) : (
+              <>
+                <MenuItem
+                  icon={Plus}
+                  onSelect={() => {
+                    onScenarioCreate(baseId ?? null);
+                    close();
+                  }}
+                >
+                  New scenario
+                </MenuItem>
+                {scenario && !scenario.isBase && (
+                  <>
+                    <MenuItem
+                      icon={GitBranch}
+                      onSelect={() => {
+                        onScenarioCreate(scenario.id);
+                        close();
+                      }}
+                    >
+                      {`Branch from ${scenario.name}`}
+                    </MenuItem>
+                    <MenuItem
+                      icon={Pencil}
+                      onSelect={() => {
+                        setDraft(scenario.name);
+                        setRenaming(scenario.id);
+                      }}
+                    >
+                      Rename
+                    </MenuItem>
+                    <MenuItem
+                      icon={Trash2}
+                      danger
+                      onSelect={() => {
+                        onScenarioDelete(scenario.id);
+                        close();
+                      }}
+                    >
+                      Delete
+                    </MenuItem>
+                  </>
+                )}
+              </>
+            )}
+
             <MenuSeparator />
             <p className="px-2 pt-0.5 pb-1.5 text-[11px] leading-[15px] text-ink-faint">
-              Scenarios are overlays: only the rows they override differ from the base case.
+              {isBase
+                ? "Scenarios are overlays: only the rows they override differ from the base case."
+                : "Typing here changes this scenario only. Held cells are marked."}
             </p>
           </>
         )}

@@ -16,6 +16,7 @@ import { persistCommand, redoModel, undoModel } from "@/app/(app)/models/actions
 import { applyCommand, type Command } from "@/lib/model/commands";
 import { evaluate } from "@/lib/model/engine";
 import { dependentsOf } from "@/lib/model/formula";
+import { withCell } from "@/lib/model/scenario";
 import { parseValue, toEditable } from "@/lib/model/format";
 import { AGGREGATION_LABEL, bucketsFor } from "@/lib/model/grain";
 import { TOTAL, type Model, type Variable } from "@/lib/model/types";
@@ -358,13 +359,30 @@ export function Workbench({ initialModel, slug }: { initialModel: Model; slug: s
           // zero in a financial model is worse than a rejected edit.
           toast.error("That is not a number", { description: `"${editing.draft}"` });
         } else {
-          run({
-            type: "SetInput",
-            variableId: target.variable.id,
-            member: target.member,
-            period: buckets[editing.column]?.from ?? 0,
-            value: parsed,
-          });
+          const period = buckets[editing.column]?.from ?? 0;
+          const scenario = model.scenarios.find((s) => s.id === scenarioId);
+
+          if (scenario && !scenario.isBase) {
+            // §4, M4.2: inside a scenario an edit is an *overlay*, not a change to the
+            // model. Writing SetInput here would edit the base case from a screen that
+            // says "Downside" at the top — every other scenario would move, and the
+            // question "what differs from base?" would have no answer left.
+            const before = scenario.overrides.find((o) => o.variableId === target.variable.id);
+            run({
+              type: "SetOverride",
+              scenarioId: scenario.id,
+              variableId: target.variable.id,
+              value: withCell(before?.value, model, target.member, period, parsed),
+            });
+          } else {
+            run({
+              type: "SetInput",
+              variableId: target.variable.id,
+              member: target.member,
+              period,
+              value: parsed,
+            });
+          }
         }
       }
 
@@ -373,7 +391,7 @@ export function Workbench({ initialModel, slug }: { initialModel: Model; slug: s
       if (moveAfter === "right") move(0, 1);
       scrollRef.current?.focus();
     },
-    [buckets, editTargetOf, editing, move, rowOf, run],
+    [buckets, editTargetOf, editing, model, move, rowOf, run, scenarioId],
   );
 
   /* ── Row actions ───────────────────────────────────────────────────────*/
@@ -575,6 +593,61 @@ export function Workbench({ initialModel, slug }: { initialModel: Model; slug: s
     [addVariable, commitEdit, duplicate, model.variables, remove, run, startEdit],
   );
 
+  /* ── Scenarios (M4.1) ──────────────────────────────────────────────────*/
+
+  /**
+   * Created with a generated name and no overrides, rather than behind a dialog asking for
+   * one. `(modelId, name)` is unique in the database, so a name has to be settled before
+   * the write either way — and a scenario you can rename in the same menu you made it in
+   * is less ceremony than a modal that blocks you until you think of a word.
+   */
+  const createScenario = useCallback(
+    (parentId: string | null) => {
+      const taken = new Set(model.scenarios.map((s) => s.name.toLowerCase()));
+      let name = "";
+      for (let n = model.scenarios.length; !name || taken.has(name.toLowerCase()); n++) {
+        name = `Scenario ${n}`;
+      }
+
+      const id = crypto.randomUUID();
+      run({
+        type: "CreateScenario",
+        scenario: {
+          id,
+          name,
+          isBase: false,
+          ...(parentId ? { parentId } : {}),
+          overrides: [],
+        },
+      });
+      // Switching to it immediately is the point: you made it to work in it.
+      setScenarioId(id);
+    },
+    [model.scenarios, run],
+  );
+
+  const deleteScenario = useCallback(
+    (scenarioId: string) => {
+      const scenario = model.scenarios.find((s) => s.id === scenarioId);
+      if (!scenario) return;
+
+      const branches = model.scenarios.filter((s) => s.parentId === scenarioId);
+      if (branches.length > 0) {
+        // The same refusal the server makes, said earlier and in words. Letting the click
+        // through so the server can reject it would be a round trip to learn something the
+        // screen already knew.
+        toast.error(`${scenario.name} has ${branches.length === 1 ? "a branch" : "branches"}`, {
+          description: `Delete ${branches.map((b) => b.name).join(", ")} first.`,
+        });
+        return;
+      }
+
+      run({ type: "DeleteScenario", scenarioId });
+      setScenarioId(model.scenarios.find((s) => s.isBase)?.id ?? model.scenarios[0]?.id);
+    },
+    [model.scenarios, run],
+  );
+
   const allCollapsed = collapsedGroups.size === model.groups.length;
   const selectedRow = rowOf(selection?.rowKey);
   const selectedVariable =
@@ -590,6 +663,9 @@ export function Workbench({ initialModel, slug }: { initialModel: Model; slug: s
         scenarios={model.scenarios}
         scenarioId={scenarioId}
         onScenarioChange={setScenarioId}
+        onScenarioCreate={createScenario}
+        onScenarioRename={(scenarioId, name) => run({ type: "RenameScenario", scenarioId, name })}
+        onScenarioDelete={deleteScenario}
         view={view}
         onViewChange={setView}
         allCollapsed={allCollapsed}
