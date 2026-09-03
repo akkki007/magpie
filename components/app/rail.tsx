@@ -1,6 +1,7 @@
 import Link from "next/link";
 import {
   BookOpen,
+  Bot,
   ChartColumn,
   Database,
   LayoutGrid,
@@ -33,6 +34,7 @@ const SECTIONS = [
   { icon: Scale, label: "Reconciliation", href: "/recon" },
   { icon: ChartColumn, label: "Boards", href: "/boards" },
   { icon: Database, label: "Data sources", href: "/databases" },
+  { icon: Bot, label: "Agents", href: "/agents" },
   { icon: BookOpen, label: "Library" },
   { icon: LayoutGrid, label: "Templates" },
 ] as const satisfies readonly { icon: typeof Table2; label: string; href?: string }[];

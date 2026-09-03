@@ -99,6 +99,13 @@ export const TOUR: TourStep[] = [
     body: "Type a question and the answer lands on the board as a tile. It picks the form too — a question with a one-number answer gets a KPI card, not a bar chart with one bar.",
   },
   {
+    path: "/agents",
+    target: '[data-tour="spawn"]',
+    side: "bottom",
+    title: "Spawn a finance-ops agent",
+    body: "Hand over a task and walk away. It plans, delegates to a model analyst and a data analyst, and comes back with a written finding — and anything it wants to change halts inside the graph for your approval first.",
+  },
+  {
     path: "/boards/financial-performance-overview",
     target: null,
     title: "One set of numbers",
