@@ -61,7 +61,7 @@ export function Tour() {
           popover: {
             title: step.title,
             description: step.body,
-            side: "bottom",
+            side: step.side ?? "bottom",
             align: "start",
             showProgress: true,
             // Counted globally, not per screen: driver.js only knows about this page's

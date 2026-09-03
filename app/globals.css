@@ -354,10 +354,23 @@
    driver.js ships its own popover chrome; this replaces it with the design
    system's, so a recording does not show a second visual language on top of
    the product. Hairlines not shadows, near-black type, blue for the thing you
-   press — the same six rules every other surface follows. */
+   press — the same six rules every other surface follows.
+
+   Every colour below is a `--color-*` token, which is the only spelling that
+   exists. The first version of this block used the names from the table in
+   `docs/design-system.md` (`--bg-surface`, `--text-primary`) — those are the
+   doc's labels for the tokens, not the tokens. An undefined `var()` does not
+   fall back: the declaration computes to `unset`, so `background: var(--bg-surface)`
+   made the popover *transparent* and overrode driver.css's own `#fff`, which is
+   why the table underneath was reading straight through it. It looked exactly
+   like a z-index bug and was not one.
+
+   `background-color`, not the `background` shorthand, for the same reason:
+   the shorthand resets everything it covers, so a bad value takes the base
+   stylesheet's colour down with it. */
 .driver-popover.magpie-tour {
-  background: var(--bg-surface);
-  border: 1px solid var(--border);
+  background-color: var(--color-surface);
+  border: 1px solid var(--color-line);
   border-radius: 12px;
   box-shadow: 0 8px 28px rgb(16 16 20 / 12%);
   padding: 16px;
@@ -369,50 +382,50 @@
   font-size: 15px;
   font-weight: 600;
   line-height: 1.35;
-  color: var(--text-primary);
+  color: var(--color-ink);
 }
 
 .driver-popover.magpie-tour .driver-popover-description {
   margin-top: 6px;
   font-size: 13px;
   line-height: 1.65;
-  color: var(--text-secondary);
+  color: var(--color-ink-2);
 }
 
 .driver-popover.magpie-tour .driver-popover-progress-text {
   font-size: 11px;
   font-variant-numeric: tabular-nums;
-  color: var(--text-faint);
+  color: var(--color-ink-faint);
 }
 
-.driver-popover.magpie-tour .driver-popover-footer button {
-  border: 1px solid var(--border-strong);
+.driver-popover.magpie-tour .driver-popover-footer-btn {
+  border: 1px solid var(--color-line-strong);
   border-radius: 8px;
   padding: 5px 11px;
   font-size: 12px;
   font-weight: 500;
   text-shadow: none;
-  color: var(--text-secondary);
-  background: var(--bg-surface);
+  color: var(--color-ink-2);
+  background-color: var(--color-surface);
 }
 
-.driver-popover.magpie-tour .driver-popover-footer button:hover {
-  background: var(--bg-hover);
+.driver-popover.magpie-tour .driver-popover-footer-btn:hover {
+  background-color: var(--color-hover);
 }
 
 /* The forward action is the one you press — the only coloured control here. */
 .driver-popover.magpie-tour .driver-popover-next-btn {
-  background: var(--color-blue-600);
+  background-color: var(--color-blue-600);
   border-color: var(--color-blue-600);
   color: #fff;
 }
 
 .driver-popover.magpie-tour .driver-popover-next-btn:hover {
-  background: var(--color-blue-700);
+  background-color: var(--color-blue-700);
   border-color: var(--color-blue-700);
   color: #fff;
 }
 
 .driver-popover.magpie-tour .driver-popover-arrow {
-  border-color: var(--bg-surface);
+  border-color: var(--color-surface);
 }

@@ -96,7 +96,49 @@ for (const [index, step] of TOUR.entries()) {
   }
 }
 
-console.log(`\n  ${TOUR.length} steps · ${checked} checks`);
+/* ── Every var() in globals.css resolves ──────────────────────────────────
+ *
+ * An undefined custom property is the quietest bug CSS has. It does not fall back and it
+ * does not warn: the declaration computes to `unset`, so `background: var(--bg-surface)`
+ * with no such token makes an element *transparent* — and, worse, overrides whatever a base
+ * stylesheet had set. The tour popover shipped like that, reading as a z-index problem
+ * because the page underneath showed through it. The names were real; they were the labels
+ * from the table in `docs/design-system.md` rather than the tokens themselves.
+ *
+ * Nothing in the toolchain catches this, so this does. It covers the whole stylesheet, not
+ * just the tour — the mistake is available to every rule in the file.
+ */
+const css = readFileSync("app/globals.css", "utf8");
+
+/* Comments are stripped first: this file explains the bug in prose, and the prose quotes
+   the very token names that caused it. Scanning them would report the explanation. */
+const code = css.replace(/\/\*[\s\S]*?\*\//g, "");
+
+const defined = new Set([...code.matchAll(/(--[a-zA-Z0-9-]+)\s*:/g)].map((m) => m[1]));
+
+/** A `var()` carrying a fallback cannot go transparent, so only bare ones are checked. */
+const used = new Set([...code.matchAll(/var\(\s*(--[a-zA-Z0-9-]+)\s*\)/g)].map((m) => m[1]));
+
+/**
+ * Not every token is declared in the stylesheet, and that is legitimate:
+ *
+ * - `next/font` mints one per face and puts it on `<html>` — the declaration lives in
+ *   `app/layout.tsx` as `variable: "--font-inter-tight"`, so the TS corpus is checked too.
+ * - Shiki writes `--shiki-dark` inline on every token span it renders; nothing in this repo
+ *   declares it and nothing should. Allowed by name, because an allowlist of one with a
+ *   reason beats a check nobody can keep green.
+ */
+const EXTERNAL = new Set(["--shiki-dark"]);
+
+for (const token of used) {
+  checked++;
+  if (defined.has(token) || EXTERNAL.has(token) || corpus.includes(token)) continue;
+  problems.push(
+    `globals.css uses ${token}, which nothing defines — the tokens are all --color-*; the names in docs/design-system.md's table are labels, not tokens`,
+  );
+}
+
+console.log(`\n  ${TOUR.length} steps · ${defined.size} tokens · ${checked} checks`);
 
 if (problems.length > 0) {
   console.log(`\n${problems.length} problem(s):`);

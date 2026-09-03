@@ -291,7 +291,7 @@ export function Grid({
         <col />
       </colgroup>
 
-      <thead>
+      <thead data-tour="grid-head">
         <tr>
           <th
             scope="col"
