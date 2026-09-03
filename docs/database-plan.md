@@ -134,10 +134,10 @@ looked at, with an audit entry attached.
 | | Task | Est |
 |---|---|---|
 | **D1** | Schema, migration, and a seeded `Customers` table matching the reference screen — *built* | 1.5h |
-| **D2** | `/databases/[slug]` — grid, typed cell rendering, select chips, search | 2h |
+| **D2** | `/databases/[slug]` — grid, typed cell rendering, select chips, search — *built* | 2h |
 | **D3** | Inline edit, add row, add field | 2h |
 | **D4** | `rollupToSeries` + "Add from database" next to CSV import in the workbench | 2h |
-| **D5** | Sidebar `Database` section listing tables | 0.5h |
+| **D5** | Sidebar `Database` section listing tables — *built with D2*: `/databases` is the index, and the rail's `Data sources` item points at it instead of being inert | 0.5h |
 
 **≈ 8 hours. The cut line is between D3 and D4.**
 

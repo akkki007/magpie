@@ -32,7 +32,7 @@ const SECTIONS = [
   { icon: Table2, label: "Models", href: "/models" },
   { icon: Scale, label: "Reconciliation", href: "/recon" },
   { icon: ChartColumn, label: "Dashboards" },
-  { icon: Database, label: "Data sources" },
+  { icon: Database, label: "Data sources", href: "/databases" },
   { icon: BookOpen, label: "Library" },
   { icon: LayoutGrid, label: "Templates" },
 ] as const satisfies readonly { icon: typeof Table2; label: string; href?: string }[];

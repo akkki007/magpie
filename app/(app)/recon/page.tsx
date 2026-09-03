@@ -8,6 +8,7 @@ import { Topbar } from "@/components/app/topbar";
 import { ReviewQueue } from "@/components/recon/review-queue";
 import { readRunReport } from "@/lib/recon/report";
 import { getSession } from "@/lib/session";
+import { initialsOf } from "@/lib/initials";
 
 export const metadata: Metadata = { title: "Reconciliation" };
 
@@ -80,10 +81,4 @@ function Empty() {
       </div>
     </div>
   );
-}
-
-function initialsOf(name: string, email: string) {
-  const source = name.trim() || email;
-  const parts = source.split(/[\s@._-]+/).filter(Boolean);
-  return (parts[0]?.[0] ?? "?").concat(parts[1]?.[0] ?? "").toUpperCase();
 }

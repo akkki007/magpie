@@ -18,6 +18,7 @@
     "calc:check": "bun run scripts/calc-check.ts",
     "history:check": "bun run scripts/history-check.ts",
     "agent:check": "bun run scripts/agent-check.ts",
+    "data:check": "bun run scripts/data-check.ts",
     "recon:seed": "bun run scripts/recon-seed.ts",
     "recon:ingest": "bun run scripts/recon-ingest.ts",
     "recon:match": "bun run scripts/recon-match.ts",

@@ -6,6 +6,7 @@ import { Workbench } from "@/components/modelling/workbench";
 import { db } from "@/lib/db";
 import { readModel } from "@/lib/model/persist";
 import { getSession } from "@/lib/session";
+import { initialsOf } from "@/lib/initials";
 
 /**
  * One model's workspace (`docs/modelling-plan.md` M1.4).
@@ -53,10 +54,4 @@ export default async function ModelPage({ params }: PageProps<"/models/[slug]">)
       </main>
     </div>
   );
-}
-
-function initialsOf(name: string, email: string) {
-  const source = name.trim() || email;
-  const parts = source.split(/[\s@._-]+/).filter(Boolean);
-  return (parts[0]?.[0] ?? "?").concat(parts[1]?.[0] ?? "").toUpperCase();
 }

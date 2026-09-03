@@ -7,6 +7,7 @@ import { Rail } from "@/components/app/rail";
 import { Topbar } from "@/components/app/topbar";
 import { db } from "@/lib/db";
 import { getSession } from "@/lib/session";
+import { initialsOf } from "@/lib/initials";
 
 export const metadata: Metadata = { title: "Models" };
 
@@ -84,10 +85,4 @@ export default async function ModelsPage() {
       </main>
     </div>
   );
-}
-
-function initialsOf(name: string, email: string) {
-  const source = name.trim() || email;
-  const parts = source.split(/[\s@._-]+/).filter(Boolean);
-  return (parts[0]?.[0] ?? "?").concat(parts[1]?.[0] ?? "").toUpperCase();
 }
