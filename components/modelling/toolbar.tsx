@@ -3,6 +3,7 @@
 import { useState } from "react";
 import {
   ChevronsDownUp,
+  Database,
   ChevronsUpDown,
   GitBranch,
   Pencil,
@@ -15,6 +16,10 @@ import {
   Upload,
   X,
 } from "lucide-react";
+
+import { RollupForm } from "@/components/modelling/rollup-form";
+import type { RollupSource } from "@/app/(app)/databases/actions";
+import type { RollupSpec } from "@/lib/data/rollup";
 
 import { Menu, MenuChoice, MenuItem, MenuLabel, MenuSeparator } from "@/components/modelling/menu";
 import { cn } from "@/lib/cn";
@@ -100,6 +105,7 @@ export function Toolbar({
   onScenarioRename,
   onScenarioDelete,
   onImportCsv,
+  onImportFromDatabase,
   view,
   onViewChange,
   allCollapsed,
@@ -121,6 +127,8 @@ export function Toolbar({
   /** Parse a pasted CSV against this model and hand back an InsertVariable command,
    *  or null (with a toast) if nothing in it matched — M7.1. */
   onImportCsv: (name: string, csvText: string) => void;
+  /** A database column, bucketed by a date column, as a LINKED variable — D4. */
+  onImportFromDatabase: (source: RollupSource, spec: RollupSpec) => Promise<void>;
   view: ViewOptions;
   onViewChange: (next: ViewOptions) => void;
   allCollapsed: boolean;
@@ -201,6 +209,20 @@ export function Toolbar({
         trigger={() => <Upload className="h-4 w-4" strokeWidth={1.75} />}
       >
         {({ close }) => <ImportCsvForm onImport={onImportCsv} onDone={close} />}
+      </Menu>
+
+      {/* Separate from the CSV menu on purpose. They produce the same thing, but a paste is
+          something you brought and a database is something the workspace already holds —
+          collapsing them into one "Import" menu would make the second one look like a file
+          picker. `docs/database-plan.md` D4. */}
+      <Menu
+        align="end"
+        width={264}
+        ariaLabel="Add from database"
+        triggerClassName="grid h-8 w-8 shrink-0 place-items-center rounded-control text-ink-muted transition-colors duration-150 hover:bg-hover hover:text-ink"
+        trigger={() => <Database className="h-4 w-4" strokeWidth={1.75} />}
+      >
+        {({ close }) => <RollupForm onAdd={onImportFromDatabase} onDone={close} />}
       </Menu>
 
       <Menu

@@ -25,7 +25,12 @@ function normalise(text: string): string {
   return text.trim().toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 
-function matchPeriod(model: Model, raw: string): number {
+/**
+ * Exported because the database rollup (`docs/database-plan.md` §3) buckets records into the
+ * same periods from the same messy inputs. Two period matchers would drift, and the drift
+ * would show up as "the CSV found January and the database didn't".
+ */
+export function matchPeriod(model: Model, raw: string): number {
   const text = raw.trim();
 
   // YYYY-MM or YYYY-MM-DD, the two shapes every spreadsheet export actually produces.

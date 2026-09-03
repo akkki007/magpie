@@ -136,7 +136,7 @@ looked at, with an audit entry attached.
 | **D1** | Schema, migration, and a seeded `Customers` table matching the reference screen — *built* | 1.5h |
 | **D2** | `/databases/[slug]` — grid, typed cell rendering, select chips, search — *built* | 2h |
 | **D3** | Inline edit, add row, add field | 2h |
-| **D4** | `rollupToSeries` + "Add from database" next to CSV import in the workbench | 2h |
+| **D4** | `rollupToSeries` + "Add from database" next to CSV import in the workbench — *built* | 2h |
 | **D5** | Sidebar `Database` section listing tables — *built with D2*: `/databases` is the index, and the rail's `Data sources` item points at it instead of being inert | 0.5h |
 
 **≈ 8 hours. The cut line is between D3 and D4.**
@@ -148,6 +148,21 @@ screenshot's dates are mostly 2023–2025 while the seeded model's horizon is 20
 at D4. `seed:database` asserts ≥50 in-horizon records and all 24 months covered, and both
 assertions were mutation-tested against a reference-only table to confirm they discriminate.
 Seeded: 6 fields, 173 rows, 157 in horizon, 24/24 months.
+
+*D4 notes.* The rollup runs on the **server** even though `rollupToSeries` is pure and could
+run either side: a table is unbounded in a way a pasted CSV is not, and shipping every record
+to the browser to compute twenty-four numbers puts the size of the database on the wire. The
+function stays isomorphic so it is testable and so a local preview stays possible.
+
+`workbench.tsx` now has a single `insertLinked` that both the paste and the rollup land in.
+They were about to be two dispatch sites producing the same command, and §6's requirement is
+exactly that a synced number stays explainable — two paths is two answers to "where did this
+number come from", and they drift.
+
+`bun run data:check` — 38 assertions. The rollup ones check the series against hand-computed
+totals rather than against a second implementation, and the blank-cell assertion was
+mutation-tested: treating a null as zero makes the average of `[100, blank]` come back as 50
+and the check fails.
 
 If time runs short, **D4 ships and D3 does not.** A read-only table that feeds a model is
 the product; an editable table that feeds nothing is a worse Airtable. Seeded data makes a

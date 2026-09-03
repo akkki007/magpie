@@ -21,11 +21,13 @@ import { applyAll, type Command } from "@/lib/model/commands";
 import { evaluate } from "@/lib/model/engine";
 import { dependentsOf } from "@/lib/model/formula";
 import { parseCsv } from "@/lib/model/csv-import";
+import { describeRollup, type RollupSpec } from "@/lib/data/rollup";
+import { rollupForModel, type RollupSource } from "@/app/(app)/databases/actions";
 import { forecastScenarios } from "@/lib/model/presets";
 import { withCell } from "@/lib/model/scenario";
 import { parseValue, toEditable } from "@/lib/model/format";
 import { AGGREGATION_LABEL, bucketsFor } from "@/lib/model/grain";
-import { TOTAL, type Model, type Variable } from "@/lib/model/types";
+import { TOTAL, type Aggregation, type Model, type NumberFormat, type Variable } from "@/lib/model/types";
 
 /**
  * The modelling workbench: everything stateful about the grid lives here, and
@@ -754,35 +756,78 @@ export function Workbench({
   );
 
   /**
-   * CSV import (§6, §7 M7.1): parse in the browser, then dispatch the same InsertVariable
-   * command "Add variable" produces. §6 asks that a synced number be explainable through
-   * the audit log; going through the command bus is what makes that true from day one
-   * instead of needing a second mechanism once a real connector exists (M7.2).
+   * One landing path for every imported series (§6, §7 M7.1 and `docs/database-plan.md` §3).
+   *
+   * A pasted CSV and a database rollup are two *producers* of the same thing, and they
+   * deliberately return the same result shape so this is the only place that turns one into
+   * a variable. If they each dispatched their own InsertVariable, "where did this number
+   * come from" would have two answers that could drift — and §6's requirement is precisely
+   * that a synced number stays explainable through the audit log. Going through the command
+   * bus is what makes undo, history and the agent's view work on day one for both.
    */
-  const importCsv = useCallback(
-    (name: string, csvText: string) => {
+  const insertLinked = useCallback(
+    (
+      name: string,
+      result: { series: number[]; matched: number; total: number },
+      shape: { format: NumberFormat; aggregation: Aggregation },
+      source: string,
+    ) => {
       const groupId = model.groups[0]?.id;
       if (!groupId) return;
 
+      run({
+        type: "InsertVariable",
+        index: model.variables.length,
+        variable: {
+          id: crypto.randomUUID(),
+          groupId,
+          name,
+          kind: "LINKED",
+          format: shape.format,
+          aggregation: shape.aggregation,
+        },
+        inputs: { [TOTAL]: result.series },
+      });
+
+      const skipped = result.total - result.matched;
+      toast.success(`Added “${name}” from ${source}`, {
+        description:
+          skipped > 0
+            ? `${result.matched} period${result.matched === 1 ? "" : "s"} filled · ${skipped} row${skipped === 1 ? "" : "s"} fell outside the horizon.`
+            : `${result.matched} period${result.matched === 1 ? "" : "s"} filled.`,
+      });
+    },
+    [model.groups, model.variables.length, run],
+  );
+
+  const importCsv = useCallback(
+    (name: string, csvText: string) => {
       const result = parseCsv(csvText, model);
       if (!result.ok) {
         toast.error("Nothing was imported", { description: result.error });
         return;
       }
-
-      run({
-        type: "InsertVariable",
-        index: model.variables.length,
-        variable: { id: crypto.randomUUID(), groupId, name, kind: "LINKED", format: "COUNT", aggregation: "SUM" },
-        inputs: { [TOTAL]: result.series },
-      });
-
-      const skipped = result.total - result.matched;
-      toast.success(`Imported ${result.matched} period${result.matched === 1 ? "" : "s"}`, {
-        description: skipped > 0 ? `${skipped} row${skipped === 1 ? "" : "s"} did not match a period and were skipped.` : undefined,
-      });
+      insertLinked(name, result, { format: "COUNT", aggregation: "SUM" }, "CSV");
     },
-    [model, run],
+    [model, insertLinked],
+  );
+
+  /**
+   * The database rollup (`docs/database-plan.md` D4) — the thing the database module exists
+   * for. The arithmetic runs on the server (a table is unbounded in a way a paste is not),
+   * and what comes back is the identical result shape a paste produces.
+   */
+  const importFromDatabase = useCallback(
+    async (source: RollupSource, spec: RollupSpec) => {
+      const result = await rollupForModel(slug, source.slug, spec);
+      if (!result.ok) {
+        toast.error("Nothing was added", { description: result.error });
+        return;
+      }
+      const shape = describeRollup({ ...source, id: source.slug, rows: [] }, spec);
+      insertLinked(shape.name, result, shape, source.name);
+    },
+    [slug, insertLinked],
   );
 
   const allCollapsed = collapsedGroups.size === model.groups.length;
@@ -813,6 +858,7 @@ export function Workbench({
         onScenarioRename={(scenarioId, name) => run({ type: "RenameScenario", scenarioId, name })}
         onScenarioDelete={deleteScenario}
         onImportCsv={importCsv}
+        onImportFromDatabase={importFromDatabase}
         view={view}
         onViewChange={setView}
         allCollapsed={allCollapsed}
