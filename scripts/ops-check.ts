@@ -13,6 +13,7 @@ import { db } from "../lib/db";
 import { executeRun, resumeRun } from "../lib/agents/run";
 import { createFinanceOpsAgent } from "../lib/agents/finance-ops";
 import { buildOpsTools, WRITE_TOOLS } from "../lib/agents/tools";
+import { CommandSchema } from "../lib/model/command-schema";
 import { toolsFor } from "../lib/agents/modes";
 import { makePlan } from "../lib/agents/planner";
 import { listTables, readTable } from "../lib/data/persist";
@@ -88,9 +89,27 @@ check("do mode has all of them", toolsFor("do", WRITE_TOOLS).length === WRITE_TO
 const propose = tools.find((t) => t.name === "proposeModelChanges")!;
 const invented = await propose.invoke({
   label: "Invented",
-  commands: [{ type: "SetInput", variableId: "v_nope", member: "TOTAL", index: 0, value: 1 }],
+  commands: [{ type: "SetInput", variableId: "v_nope", member: "TOTAL", period: 0, value: 1 }],
 });
 check("an invented variable id is refused", String(invented).startsWith("Rejected"), String(invented).slice(0, 90));
+
+/**
+ * The proposal tool takes the real CommandSchema, not `z.any()`. A live run produced
+ * `{"setVariable": {...}}` — not a command at all — and with `any` it sailed through to the
+ * approval screen, where a person would have approved something grounding was always going
+ * to refuse. `interruptOn` halts before the tool body, so the schema is the only thing
+ * between a malformed proposal and a human's yes.
+ */
+const malformed = CommandSchema.safeParse({ setVariable: { id: "new_accounts_jul_2026", value: 2 } });
+check("a non-command shape fails the tool schema", !malformed.success);
+const wellFormed = CommandSchema.safeParse({
+  type: "SetInput",
+  variableId: "v_x",
+  member: "TOTAL",
+  period: 0,
+  value: 1,
+});
+check("…and a real command passes it", wellFormed.success, JSON.stringify(wellFormed.error?.issues?.[0]));
 
 const createTable = tools.find((t) => t.name === "createTable")!;
 const noDate = await createTable.invoke({

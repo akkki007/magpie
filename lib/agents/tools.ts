@@ -15,6 +15,7 @@ import {
   runScenario,
 } from "@/lib/model/agent-tools";
 import { proposeChangeSet } from "@/lib/model/changesets";
+import { CommandSchema } from "@/lib/model/command-schema";
 import type { Actor } from "@/lib/model/changesets";
 import type { Model } from "@/lib/model/types";
 
@@ -88,8 +89,10 @@ export function buildOpsTools(ctx: ToolContext) {
       name: "runScenario",
       description:
         "Try a batch of commands in memory and see what they would do. Nothing is saved — this is a rehearsal, never the deliverable.",
+      // Same schema as the real proposal, so a rehearsal that would not be legal fails here
+      // rather than looking fine and then being refused at the gate.
       schema: z.object({
-        commands: z.array(z.any()).max(50),
+        commands: z.array(CommandSchema).max(50),
         scenarioId: z.string().optional(),
       }),
     },
@@ -268,9 +271,24 @@ export function buildOpsTools(ctx: ToolContext) {
       name: "proposeModelChanges",
       description:
         "Stage a batch of commands against the model for a human to accept or reject. Nothing is applied. Ground every id in getModelOutline first.",
+      /**
+       * The real `CommandSchema`, not `z.array(z.any())`.
+       *
+       * This mattered more than it looks. With `any`, a command of *any* shape reached the
+       * approval gate — and a live run produced `{"setVariable": {"id":
+       * "new_accounts_jul_2026", "value": 2}}`, which is not a command and names a variable
+       * that does not exist. The person would have been shown that as the thing to approve,
+       * approved it, and only then would grounding have refused it.
+       *
+       * `interruptOn` halts *before* the tool body runs, so grounding cannot vet the args
+       * first — which makes the schema the only thing standing between a malformed proposal
+       * and a human's approval screen. Handing the model the real union also tells it the
+       * shape up front, so it stops guessing: the same reasoning M5.1 gives for deriving the
+       * agent's tool definitions from the command schema rather than describing them in prose.
+       */
       schema: z.object({
         label: z.string().min(1).max(80),
-        commands: z.array(z.any()).min(1).max(50),
+        commands: z.array(CommandSchema).min(1).max(50),
       }),
     },
   );

@@ -191,3 +191,33 @@ proposed.
   title "Onboarding vs Forecast". A concrete sample where a shape was meant.
 - **It planned work no tool can do**, ending with "populate the table with initial data".
   The prompt now states what the agent cannot do as explicitly as what it can.
+
+
+## 8. Two holes the first long run found
+
+A deliberately demanding task — reconcile the 2026 new-accounts plan against the Customers
+table, then propose a corrected forecast — exercised the whole architecture in one run:
+`write_todos → model-analyst → write_file → data-analyst → write_file → calculate ×8 →
+write_file → proposeModelChanges`, halting at the gate. It also found two real bugs, neither
+of which a short run would have reached.
+
+**1. `z.array(z.any())` let a non-command reach the approval screen.** The proposal tool's
+schema accepted anything, and the run produced `{"setVariable": {"id":
+"new_accounts_jul_2026", "value": 2}}` — not a command, naming a variable that does not
+exist. Because `interruptOn` halts *before* the tool body, grounding never got to see it:
+the person would have been shown that as the thing to approve, said yes, and only then would
+it have been refused. The tool now takes the real `CommandSchema`, so a malformed batch fails
+at the model boundary and gets corrected before any human is involved.
+
+**2. `member` was never checked against the variable's dimension.** With the schema fixed the
+next run produced a well-formed `SetInput` — carrying `member: "2026-07"`. `New Accounts` is
+dimensioned by plan (starter/growth/enterprise), so that key belongs to no member, and
+grounding accepted it. Approving would have written an input invisible in the grid, absent
+from every rollup, and still sitting in `variable_input`. **Data that exists and cannot be
+seen is worse than a rejected proposal.**
+
+The agent had confused the member axis with the period axis, which is an easy mistake from
+outside the model and exactly what grounding is for. `groundProposal` now checks the member
+against the variable's dimension, requires `TOTAL` on an undimensioned row, and rejects a
+period past the horizon — with an error that names the real members. Pinned in
+`agent:check`, since the bug lives in the modelling module rather than here.

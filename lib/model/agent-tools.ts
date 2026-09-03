@@ -211,12 +211,57 @@ export function groundProposal(model: Model, args: z.infer<typeof ProposeChanges
 
       case "SetInput":
       case "RenameVariable":
-      case "RemoveVariable":
+      case "RemoveVariable": {
         if (!variableIds.has(command.variableId)) {
           return { ok: false, error: `No variable ${command.variableId} in this model` };
         }
+
+        /**
+         * `member` has to be a real dimension key, and this was a hole.
+         *
+         * `CommandSchema` types it as a string, and nothing downstream checked it against
+         * the variable's dimension — so a live run proposing
+         * `{ variableId: v_new_accounts, member: "2026-07", period: 7 }` passed grounding
+         * clean. `New Accounts` is dimensioned by plan (starter/growth/enterprise), so
+         * accepting that would have written an input under a key no row reads: invisible in
+         * the grid, absent from every rollup, and still sitting in `variable_input`. Data
+         * that exists and cannot be seen is worse than a rejected proposal.
+         *
+         * The agent had confused the member axis with the period axis, which is an easy
+         * mistake to make from the outside and exactly what grounding is for.
+         */
+        if (command.type === "SetInput") {
+          const variable = knownVariables.find((v) => v.id === command.variableId);
+          const dimension = variable?.dimensionId
+            ? model.dimensions.find((d) => d.id === variable.dimensionId)
+            : undefined;
+
+          if (dimension) {
+            const keys = dimension.members.map((m) => m.key);
+            if (command.member !== TOTAL && !keys.includes(command.member)) {
+              return {
+                ok: false,
+                error: `"${command.member}" is not a member of ${dimension.name}. Use one of ${keys.join(", ")}, or "${TOTAL}" for the whole row. The period is the separate \`period\` field — an index from 0.`,
+              };
+            }
+          } else if (command.member !== TOTAL) {
+            return {
+              ok: false,
+              error: `${variable?.name ?? command.variableId} has no dimension, so member must be "${TOTAL}". The period goes in \`period\`, as an index from 0.`,
+            };
+          }
+
+          if (command.period >= model.periods.length) {
+            return {
+              ok: false,
+              error: `period ${command.period} is past the end of the horizon — it is an index from 0, and this model has ${model.periods.length} periods.`,
+            };
+          }
+        }
+
         if (command.type === "RemoveVariable") variableIds.delete(command.variableId);
         break;
+      }
 
       case "CreateScenario":
         scenarioIds.add(command.scenario.id);

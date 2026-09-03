@@ -12,6 +12,7 @@ import { evaluate } from "../lib/model/engine";
 import { getModelOutline, getSeries, getVariable, groundProposal, runScenario } from "../lib/model/agent-tools";
 import { readModel } from "../lib/model/persist";
 import { db } from "../lib/db";
+import { TOTAL } from "../lib/model/types";
 import { V } from "../prisma/seed-data";
 
 let failures = 0;
@@ -135,6 +136,52 @@ console.log("\ngroundProposal — the gate before a human sees anything");
     commands: [{ type: "SetFormula", variableId: V.revenue, formula: { type: "call", fn: "ABS", args: [] } }],
   });
   check("an arity error is caught the same way a human's would be", !badArity.ok);
+}
+
+/* ── A period is not a dimension member (found by the finance-ops agent) ──
+ *
+ * `CommandSchema` types `member` as a string and nothing checked it against the variable's
+ * dimension, so a live run proposing `{ variableId: v_new_accounts, member: "2026-07",
+ * period: 7 }` grounded clean. `New Accounts` is dimensioned by plan, so accepting that
+ * would have written an input under a key no row reads — invisible in the grid, absent from
+ * every rollup, and still sitting in `variable_input`. Data that exists and cannot be seen
+ * is worse than a rejected proposal.
+ */
+{
+  const dimensioned = model.variables.find((v) => v.dimensionId);
+  const plain = model.variables.find((v) => !v.dimensionId && v.kind === "INPUT");
+
+  if (dimensioned && plain) {
+    const set = (variableId: string, member: string, period = 0) =>
+      groundProposal(model, {
+        label: "member check",
+        commands: [{ type: "SetInput", variableId, member, period, value: 1 }] as never,
+      });
+
+    check(
+      "a period string is not accepted as a dimension member",
+      !set(dimensioned.id, "2026-07").ok,
+      "it grounded clean — an input would land under a key nothing reads",
+    );
+    check(
+      "…and the error names the real members",
+      /starter|growth|enterprise/.test((set(dimensioned.id, "2026-07") as { error?: string }).error ?? ""),
+    );
+    check("a real member key is accepted", set(dimensioned.id, "growth").ok);
+    check("TOTAL is accepted on a dimensioned row", set(dimensioned.id, TOTAL).ok);
+    check(
+      "a member on an undimensioned row is refused",
+      !set(plain.id, "growth").ok,
+      "an undimensioned variable has no members to set",
+    );
+    check(
+      "a period past the horizon is refused",
+      !set(dimensioned.id, TOTAL, model.periods.length + 5).ok,
+      "it would write outside the model",
+    );
+  } else {
+    check("fixture has a dimensioned and a plain input variable", false, "fixture changed");
+  }
 }
 
 console.log(failures === 0 ? "\nAll checks passed.\n" : `\n${failures} check(s) failed.\n`);
