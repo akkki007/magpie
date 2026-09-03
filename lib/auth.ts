@@ -4,12 +4,25 @@ import { nextCookies } from "better-auth/next-js";
 import { magicLink } from "better-auth/plugins/magic-link";
 
 import { db } from "@/lib/db";
-import { magicLinkEmail } from "@/lib/emails/magic-link";
+import { MAGIC_LINK_TEMPLATE, magicLinkVariables } from "@/lib/emails/magic-link";
 import { verifyEmailEmail } from "@/lib/emails/verify-email";
-import { sendMail } from "@/lib/mail";
+import { sendMail, sendTemplateMail } from "@/lib/mail";
 
-/** How long a sign-in link stays valid. Also quoted in the email itself. */
-export const MAGIC_LINK_MINUTES = 10;
+/**
+ * How long a sign-in link stays valid.
+ *
+ * 15, not the 10 it was, because the email now says so: the "Sign In" template's copy
+ * reads "This link will expire in 15 minutes", and that sentence is authored in Resend's
+ * dashboard, not here. Of the two ways to stop the email lying, matching the constant is
+ * the one that does not require editing a published template on every change — and 15
+ * minutes for a single-use, hashed-at-rest token is well inside normal.
+ *
+ * If the template's copy changes, this changes with it. They are one fact in two places,
+ * which is a thing to know rather than a thing to fix: making the duration a template
+ * variable would put the number back under code's control, and is worth doing the moment
+ * anyone wants to tune it.
+ */
+export const MAGIC_LINK_MINUTES = 15;
 
 /**
  * Longer than a sign-in link, because it is not one: this link proves an
@@ -150,11 +163,22 @@ export const auth = betterAuth({
        */
 
       async sendMagicLink({ email, url }) {
-        const { subject, text, html } = magicLinkEmail({
-          url,
-          expiresInMinutes: MAGIC_LINK_MINUTES,
+        /**
+         * The template greets by first name, and Better Auth hands this callback only an
+         * address — so we look the name up ourselves. One indexed read on a unique column,
+         * and it is allowed to miss: a link to an address with no account is the sign-up
+         * path, and `magicLinkVariables` turns a missing name into "Hi there,".
+         */
+        const user = await db.user.findUnique({
+          where: { email },
+          select: { name: true },
         });
-        await sendMail({ to: email, subject, text, html });
+
+        await sendTemplateMail({
+          to: email,
+          template: MAGIC_LINK_TEMPLATE,
+          variables: magicLinkVariables({ url, name: user?.name ?? null }),
+        });
       },
     }),
 

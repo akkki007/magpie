@@ -304,8 +304,33 @@ failure that would otherwise surface only when a real user asks for a link.
 
 One sharp edge worth knowing: Resend's SDK **returns** failures as `{ data: null, error }`
 rather than throwing. Unchecked, every failed send would look like a successful one, and
-`sendMagicLink` deliberately awaits `sendMail` so the form can tell the user the link did
-not go out. `lib/mail.ts` re-throws to keep that true.
+`sendMagicLink` deliberately awaits its send so the form can tell the user the link did not
+go out. `lib/mail.ts` re-throws to keep that true.
+
+**The sign-in email is a Resend template, not a body built here.** `lib/mail.ts` exports two
+senders, and they are separate on purpose: `sendMail` takes a subject and a body and Resend
+delivers it (still how the verification email works), while `sendTemplateMail` hands Resend
+a template alias and a set of variables and Resend owns the subject, the HTML and the text.
+Those are opposite contracts; one signature with four optional fields would hide which one a
+call site is using. The magic link uses the published `sign-in` template — referenced by
+alias rather than uuid, since both resolve and only one is readable.
+
+Two consequences that are easy to get wrong:
+
+- **Every declared variable is sent, every time.** Resend substitutes a variable's authoring
+  `fallback_value` when a send omits it, and those are placeholders — `first_name` falls
+  back to "Alice". An omitted variable is not a blank, it is a confident wrong answer. The
+  template declares `app_name`, `first_name` and `magic_link_url`; `magicLinkVariables`
+  returns all three or none.
+- **`MAGIC_LINK_MINUTES` is 15, not 10, because the template's copy says so.** The sentence
+  "This link will expire in 15 minutes" is authored in Resend's dashboard, so the constant
+  moved to match rather than a published template being edited on every change. It is one
+  fact in two places — worth knowing rather than worth fixing, until someone wants to tune
+  the duration, at which point it becomes a fourth template variable.
+
+Better Auth hands `sendMagicLink` only an address, so the greeting costs one indexed read on
+`user.email` — allowed to miss, because a link to an unknown address is the sign-up path and
+"no name" renders as "Hi there,".
 
 **Why the link is a separate page and not a toggle on `/sign-in`:** a toggle is client
 state, so with JavaScript blocked or still loading there is no way to reach the second

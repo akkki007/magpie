@@ -64,13 +64,73 @@ export async function sendMail({ to, subject, text, html }: Mail) {
   }
 
   const { error } = await resend.emails.send({ from: MAIL_FROM, to, subject, text, html });
+  raise(error);
+}
+
+type TemplateMail = {
+  to: string;
+  /**
+   * The template's **alias** from the Resend dashboard (`sign-in`), not its uuid. Both
+   * resolve — verified against the live API — and the alias is the one a person can read
+   * and re-point at a rebuilt template without a code change.
+   */
+  template: string;
+  /**
+   * Every variable the template declares, always. Resend substitutes a template's
+   * `fallback_value` for anything omitted, and those fallbacks are authoring placeholders:
+   * leaving `first_name` out greets every user as "Alice".
+   */
+  variables: Record<string, string>;
+};
+
+/**
+ * Send a template authored in Resend, rather than a body built here.
+ *
+ * A separate function on purpose. `sendMail` takes a body and Resend delivers it; this
+ * hands Resend a *name and some values* and Resend owns the subject, the HTML, and the
+ * text. Those are opposite contracts, and collapsing them into one signature with four
+ * optional fields would make every call site read as though it could do both.
+ */
+export async function sendTemplateMail({ to, template, variables }: TemplateMail) {
+  const resend = client();
+
+  if (!resend) {
+    if (process.env.NODE_ENV === "production") {
+      throw new Error("RESEND_API_KEY is not set");
+    }
+    // The variables are all we have — the body lives in Resend. That is enough for the
+    // case this fallback exists for: `magic_link_url` is right there to paste.
+    console.warn(
+      `\n── mail not configured, printing instead ──\nto:       ${to}\ntemplate: ${template}\n\n${Object.entries(
+        variables,
+      )
+        .map(([key, value]) => `${key}: ${value}`)
+        .join("\n")}\n──────────────────────────────────────────\n`,
+    );
+    return;
+  }
 
   /**
-   * Resend *returns* its errors as `{ data: null, error }` rather than throwing. Left
-   * unchecked that turns every failure into a successful-looking send — and `sendMagicLink`
-   * in `lib/auth.ts` deliberately awaits this and lets errors propagate so the sign-in form
-   * can say the link did not go out. Re-throwing is what keeps that promise true.
+   * `from` is passed even though the template carries one, so the sending identity has a
+   * single source of truth in this file rather than drifting whenever someone edits the
+   * template. `subject` is deliberately *not* passed: it is part of the copy, and the copy
+   * belongs to the template.
    */
+  const { error } = await resend.emails.send({
+    from: MAIL_FROM,
+    to,
+    template: { id: template, variables },
+  });
+  raise(error);
+}
+
+/**
+ * Resend *returns* its errors as `{ data: null, error }` rather than throwing. Left
+ * unchecked that turns every failure into a successful-looking send — and `sendMagicLink`
+ * in `lib/auth.ts` deliberately awaits its send and lets errors propagate so the sign-in
+ * form can say the link did not go out. Re-throwing is what keeps that promise true.
+ */
+function raise(error: { name: string; message: string } | null) {
   if (error) {
     throw new Error(`Resend refused the send (${error.name}): ${error.message}`);
   }
