@@ -128,3 +128,92 @@ export function describeRollup(
     aggregation: spec.aggregation === "AVG" ? "AVG" : "SUM",
   };
 }
+
+
+/* ── Breakdown: one series per category ───────────────────────────────────*/
+
+export type BreakdownSpec = RollupSpec & { breakdownFieldId: string };
+
+export type BreakdownResult =
+  | {
+      ok: true;
+      series: { label: string; values: number[] }[];
+      matched: number;
+      total: number;
+      unmatched: string[];
+    }
+  | { ok: false; error: string };
+
+/**
+ * The same rollup, split by a second column — "pipeline value by stage, per month".
+ * This is the shape a stacked bar is, and the one a board asks for most.
+ *
+ * **Series are capped at `MAX_SERIES` and the tail folds into "Other".** Not a display
+ * nicety: the viz ramp has six steps, and a seventh series would either repeat a hue (two
+ * categories that look identical) or generate one outside the ramp (a colour the design
+ * system does not own). Both are worse than an honest bucket. The cap keeps the largest
+ * categories by total, because those are the ones a reader is looking for.
+ */
+const MAX_SERIES = 6;
+
+export function rollupByBreakdown(
+  table: Table,
+  model: Model,
+  spec: BreakdownSpec,
+): BreakdownResult {
+  const breakdownField = table.fields.find((f) => f.id === spec.breakdownFieldId);
+  if (!breakdownField) return { ok: false, error: "That breakdown column no longer exists." };
+
+  /* Group first, then reuse the single-series rollup per group — one implementation of the
+     bucketing arithmetic, not two. */
+  const groups = new Map<string, Table["rows"]>();
+  for (const row of table.rows) {
+    const raw = row.cells[breakdownField.id];
+    const key = raw === null || raw === undefined || raw === "" ? "Unspecified" : String(raw);
+    const bucket = groups.get(key);
+    if (bucket) bucket.push(row);
+    else groups.set(key, [row]);
+  }
+
+  if (groups.size === 0) return { ok: false, error: `${table.name} has no rows to break down.` };
+
+  const rolled: { label: string; values: number[]; weight: number }[] = [];
+  let matched = 0;
+  let total = 0;
+  const unmatched: string[] = [];
+
+  for (const [label, rows] of groups) {
+    const result = rollupToSeries({ ...table, rows }, model, spec);
+    if (!result.ok) continue;
+    rolled.push({
+      label,
+      values: result.series,
+      weight: result.series.reduce((a, b) => a + b, 0),
+    });
+    matched = Math.max(matched, result.matched);
+    total += result.total;
+    unmatched.push(...result.unmatched);
+  }
+
+  if (rolled.length === 0) {
+    return {
+      ok: false,
+      error: `No record in ${table.name} fell inside this model's horizon.`,
+    };
+  }
+
+  rolled.sort((a, b) => b.weight - a.weight);
+
+  const kept = rolled.slice(0, MAX_SERIES - (rolled.length > MAX_SERIES ? 1 : 0));
+  const tail = rolled.slice(kept.length);
+
+  const series = kept.map(({ label, values }) => ({ label, values }));
+  if (tail.length > 0) {
+    series.push({
+      label: `Other (${tail.length})`,
+      values: model.periods.map((_, i) => tail.reduce((sum, s) => sum + s.values[i], 0)),
+    });
+  }
+
+  return { ok: true, series, matched, total, unmatched };
+}

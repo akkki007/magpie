@@ -31,14 +31,14 @@ import { cn } from "@/lib/cn";
 const SECTIONS = [
   { icon: Table2, label: "Models", href: "/models" },
   { icon: Scale, label: "Reconciliation", href: "/recon" },
-  { icon: ChartColumn, label: "Dashboards" },
+  { icon: ChartColumn, label: "Boards", href: "/boards" },
   { icon: Database, label: "Data sources", href: "/databases" },
   { icon: BookOpen, label: "Library" },
   { icon: LayoutGrid, label: "Templates" },
 ] as const satisfies readonly { icon: typeof Table2; label: string; href?: string }[];
 
 export function Rail({
-  active = "Dashboards",
+  active = "Models",
   initials,
 }: {
   active?: (typeof SECTIONS)[number]["label"];

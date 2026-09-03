@@ -674,3 +674,56 @@ model DataRecord {
   @@index([tableId, order])
   @@map("data_record")
 }
+
+// ─── Boards (Reporting) ─────────────────────────────────────────────────────
+//
+// `docs/board-plan.md`. A board is a page of tiles over data that already exists
+// — model series (§1.5) and database rollups (`docs/database-plan.md` §3). It
+// owns no numbers of its own, which is the whole point: "the same integrated
+// data, plans and databases" means a board must not become a fourth place a
+// figure can come from.
+
+enum TileKind {
+  KPI
+  CHART
+  TEXT
+}
+
+model Board {
+  id             String      @id @default(uuid())
+  organisationId String?
+  /// Stable URL key, so `/boards/[slug]` survives a rename.
+  slug           String
+  title          String
+  /// The emoji the design puts before the board title. Display only.
+  emoji          String?
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+  tiles          BoardTile[]
+
+  @@unique([slug])
+  @@index([organisationId])
+  @@map("board")
+}
+
+/// One tile. `spec` is the discriminated union in `lib/board/spec.ts`, parsed on
+/// every read — a tile written by an older build, or by a model that drifted, is
+/// rejected at the boundary rather than crashing the page it is on.
+///
+/// `question` is the prompt that produced it, kept for the same reason the change
+/// log keeps an actor: a figure on an executive board has to be able to say where
+/// it came from. Null for a tile nobody asked for in words.
+model BoardTile {
+  id        String   @id @default(uuid())
+  boardId   String
+  kind      TileKind
+  spec      Json
+  question  String?
+  order     Int
+  createdAt DateTime @default(now())
+
+  board Board @relation(fields: [boardId], references: [id], onDelete: Cascade)
+
+  @@index([boardId, order])
+  @@map("board_tile")
+}
