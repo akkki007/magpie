@@ -14,6 +14,7 @@
     "auth:tables": "bun run scripts/auth-tables.ts",
     "mail:check": "bun run scripts/mail-check.ts",
     "seed": "bun run scripts/seed-model.ts",
+    "seed:database": "bun run scripts/seed-database.ts",
     "calc:check": "bun run scripts/calc-check.ts",
     "history:check": "bun run scripts/history-check.ts",
     "agent:check": "bun run scripts/agent-check.ts",

@@ -133,13 +133,21 @@ looked at, with an audit entry attached.
 
 | | Task | Est |
 |---|---|---|
-| **D1** | Schema, migration, and a seeded `Customers` table matching the reference screen | 1.5h |
+| **D1** | Schema, migration, and a seeded `Customers` table matching the reference screen — *built* | 1.5h |
 | **D2** | `/databases/[slug]` — grid, typed cell rendering, select chips, search | 2h |
 | **D3** | Inline edit, add row, add field | 2h |
 | **D4** | `rollupToSeries` + "Add from database" next to CSV import in the workbench | 2h |
 | **D5** | Sidebar `Database` section listing tables | 0.5h |
 
 **≈ 8 hours. The cut line is between D3 and D4.**
+
+*D1 notes.* The fixture is two populations, and the second one is not padding. The reference
+screenshot's dates are mostly 2023–2025 while the seeded model's horizon is 2026-01 →
+2027-12, so the 19 transcribed rows put **3 records in horizon across 2 of 24 months** —
+§3's rollup would have produced a flat line with three spikes and the demo would have died
+at D4. `seed:database` asserts ≥50 in-horizon records and all 24 months covered, and both
+assertions were mutation-tested against a reference-only table to confirm they discriminate.
+Seeded: 6 fields, 173 rows, 157 in horizon, 24/24 months.
 
 If time runs short, **D4 ships and D3 does not.** A read-only table that feeds a model is
 the product; an editable table that feeds nothing is a worse Airtable. Seeded data makes a

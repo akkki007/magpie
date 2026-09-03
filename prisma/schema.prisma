@@ -56,7 +56,7 @@ model Session {
 }
 
 model Account {
-  id String @id
+  id                    String    @id
   /// Who vouched for this identity: `local:credential` for a password, or the
   /// OAuth issuer URL. Paired with accountId it is what makes "the same Google
   /// account" a single row rather than a duplicate on every sign-in.
@@ -293,32 +293,32 @@ model VariableGroup {
 }
 
 model Variable {
-  id      String       @id @default(uuid())
-  modelId String
-  groupId String
-  name    String
-  kind    VariableKind
-  format  NumberFormat
+  id           String        @id @default(uuid())
+  modelId      String
+  groupId      String
+  name         String
+  kind         VariableKind
+  format       NumberFormat
   /// §1.2 — belongs to the variable, never to the chart.
   aggregation  Aggregation
   /// Expands the row into one child per member (§1.6).
   dimensionId  String?
   memberRollup MemberRollup?
   /// The violet time chip on a reference, e.g. "Monthly".
-  timeContext String?
-  note        String?
-  order       Int
+  timeContext  String?
+  note         String?
+  order        Int
 
-  model     Model            @relation(fields: [modelId], references: [id], onDelete: Cascade)
-  group     VariableGroup    @relation(fields: [groupId], references: [id], onDelete: Cascade)
-  dimension Dimension?       @relation(fields: [dimensionId], references: [id])
-  formula   FormulaNode[]    @relation("VariableFormula")
+  model        Model              @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  group        VariableGroup      @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  dimension    Dimension?         @relation(fields: [dimensionId], references: [id])
+  formula      FormulaNode[]      @relation("VariableFormula")
   /// Formula nodes elsewhere that point *at* this variable.
-  referencedBy FormulaNode[] @relation("FormulaRef")
-  inputs    VariableInput[]
-  series    VariableSeries[]
-  comments  Comment[]
-  overrides ScenarioOverride[]
+  referencedBy FormulaNode[]      @relation("FormulaRef")
+  inputs       VariableInput[]
+  series       VariableSeries[]
+  comments     Comment[]
+  overrides    ScenarioOverride[]
 
   // §2: a formula referencing "Revenue" can only mean one variable. The
   // case-insensitive half of this is a functional index added in the migration
@@ -356,22 +356,22 @@ model DimensionMember {
 
 /// §1.1. A formula is this tree and nothing else.
 model FormulaNode {
-  id       String          @id @default(uuid())
-  variableId String
-  parentId String?
-  type     FormulaNodeType
+  id            String          @id @default(uuid())
+  variableId    String
+  parentId      String?
+  type          FormulaNodeType
   /// `binary` only.
-  op       BinaryOp?
+  op            BinaryOp?
   /// `literal` only. Numeric, not float — a rate typed as 0.075 must survive.
-  literal  Decimal?        @db.Decimal(20, 6)
+  literal       Decimal?        @db.Decimal(20, 6)
   /// `ref` only. A foreign key, which is what makes a rename safe.
   refVariableId String?
   /// `ref` only — pins a dimension slice (`[v] BY plan = "Growth"`).
   refMember     String?
   /// `call` only.
-  fn       FormulaFn?
+  fn            FormulaFn?
   /// Argument position under `parentId`, so the tree rebuilds deterministically.
-  order    Int
+  order         Int
 
   variable    Variable      @relation("VariableFormula", fields: [variableId], references: [id], onDelete: Cascade)
   refVariable Variable?     @relation("FormulaRef", fields: [refVariableId], references: [id])
@@ -451,7 +451,6 @@ model ScenarioOverride {
   @@map("scenario_override")
 }
 
-
 /// One atomic change to a model (§1.3, M3.1).
 ///
 /// A user's keystroke is a changeset of one command; an agent's proposal (§1.4)
@@ -459,19 +458,19 @@ model ScenarioOverride {
 /// themselves changesets — the log is append-only, because it *is* the audit
 /// trail, and a trail you can delete from answers no question worth asking.
 model ChangeSet {
-  id      String       @id
-  modelId String
+  id       String           @id
+  modelId  String
   /// Monotonic per model, and null until this changeset is actually applied.
   /// A PROPOSED changeset holds commands nobody has run yet, so it must not occupy a slot
   /// in "the commands since version X" that rollback and the undo stack walk — that is
   /// what the ordered log actually means. It gets a real seq the moment it is accepted.
-  seq     Int?
-  kind    ChangeKind
-  origin  ChangeOrigin    @default(USER)
+  seq      Int?
+  kind     ChangeKind
+  origin   ChangeOrigin     @default(USER)
   /// See ChangeSetStatus. Read as ACCEPTED when null.
-  status  ChangeSetStatus?
+  status   ChangeSetStatus?
   /// What the history panel shows: "Edit value", "Add variable".
-  label   String
+  label    String
   /// The EDIT (or ROLLBACK) this UNDO or REDO acts on. It is what makes the
   /// stack reconstructible; the undo still stores the commands it actually
   /// applied, so every entry says what it did rather than what it points at.
@@ -483,8 +482,8 @@ model ChangeSet {
   actorName String
   createdAt DateTime @default(now())
 
-  model    Model     @relation(fields: [modelId], references: [id], onDelete: Cascade)
-  target   ChangeSet? @relation("ChangeSetTarget", fields: [targetId], references: [id])
+  model    Model       @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  target   ChangeSet?  @relation("ChangeSetTarget", fields: [targetId], references: [id])
   reverts  ChangeSet[] @relation("ChangeSetTarget")
   commands Command[]
 
@@ -595,4 +594,83 @@ model ModelVersion {
 
   @@index([modelId, seq])
   @@map("model_version")
+}
+
+// ─── Database module ────────────────────────────────────────────────────────
+//
+// `docs/database-plan.md`. A typed table of records, whose real job is §3: a
+// column bucketed by a date field becomes a `LINKED` variable in a model,
+// through the same `InsertVariable` command the CSV importer already uses.
+//
+// Prefixed `Data*` because a bare `Record` collides with TypeScript's
+// `Record<K, V>` in every file that would touch it.
+
+/// §1.3 — five types, and the renderer draws all five. The rule `NumberFormat`
+/// states applies here: this enum must not be able to express a state the grid
+/// cannot draw, so a new type lands on the day its cell renders and not before.
+/// There is deliberately no `PERSON`: it would render identically to `SELECT`,
+/// and a type that is a synonym is a type that will drift.
+enum FieldType {
+  TEXT
+  NUMBER
+  CURRENCY
+  DATE
+  SELECT
+}
+
+model DataTable {
+  id             String       @id @default(uuid())
+  organisationId String?
+  name           String
+  /// Stable URL key, so `/databases/[slug]` survives a rename.
+  slug           String
+  /// The sidebar glyph. A short emoji or lucide name, not a URL.
+  icon           String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  fields         DataField[]
+  records        DataRecord[]
+
+  @@unique([slug])
+  @@index([organisationId])
+  @@map("data_table")
+}
+
+model DataField {
+  id      String    @id @default(uuid())
+  tableId String
+  name    String
+  type    FieldType
+  /// `SELECT` only: `{ "options": [{ "value": "Active", "tone": "sky" }] }`.
+  /// The tone is a `ChipTone`, so a database chip is the design system's chip
+  /// and not a second palette invented next to it.
+  options Json?
+  order   Int
+
+  table DataTable @relation(fields: [tableId], references: [id], onDelete: Cascade)
+
+  @@unique([tableId, name])
+  @@index([tableId])
+  @@map("data_field")
+}
+
+/// One row. `cells` is keyed by **field id**, never by field name — the same
+/// reasoning §1.1 of the modelling plan gives for formula refs: renaming a
+/// field must not orphan every value under it.
+///
+/// jsonb rather than a real column per field, because adding a field must not
+/// be runtime DDL. The cost is honest: no per-field constraint, and no index on
+/// a cell until someone writes an expression index. Free at these row counts;
+/// the first thing to revisit at a million.
+model DataRecord {
+  id        String   @id @default(uuid())
+  tableId   String
+  cells     Json
+  order     Int
+  createdAt DateTime @default(now())
+
+  table DataTable @relation(fields: [tableId], references: [id], onDelete: Cascade)
+
+  @@index([tableId, order])
+  @@map("data_record")
 }
