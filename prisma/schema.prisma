@@ -749,24 +749,36 @@ model AgentRun {
   /// must not make the history start lying about who asked for what.
   actorName String
   task      String
+  /// `ask` | `plan` | `do` — which tools the run was given. Recorded because it
+  /// changes what the run was *able* to do, which is context a reader needs when
+  /// they come back to it and wonder why nothing was proposed.
+  mode      String    @default("do")
   status    RunStatus @default(RUNNING)
 
-  /// The agent's own todo list, as it maintains it. This is the progress bar.
-  plan     Json?
+  /// The todo list. Generated deterministically *before* the run starts
+  /// (`lib/agents/planner.ts`) and then updated by the agent as it works, so a
+  /// run always has a visible plan rather than one it was merely asked to write.
+  plan      Json?
+  /// The plan's heading and one-line summary, for the card.
+  planTitle String?
+  planNote  String?
+  /// What the run is doing right now — the live line under the header. Null once
+  /// the run is no longer running; a finished run is not "reading the tables".
+  activity  String?
   /// Tool calls and subagent delegations, in order. Written *during* the run —
   /// progress that only lands on completion is a spinner with extra steps, and
   /// a crashed run would leave nothing to read.
-  steps    Json?
+  steps     Json?
   /// The virtual filesystem the run wrote: its working notes and its output.
-  files    Json?
+  files     Json?
   /// Signatures of writes a person has already declined on this run. The agent is
   /// not trusted to remember — see `lib/agents/run.ts`.
-  declined Json?
+  declined  Json?
   /// While WAITING: the write the agent is asking permission for, as LangChain's
   /// `actionRequests` — the tool name and the exact arguments. Stored rather than
   /// re-derived, so the approval screen can show what it is approving without
   /// having to reconstruct the graph to ask.
-  pending  Json?
+  pending   Json?
 
   result String?
   error  String?

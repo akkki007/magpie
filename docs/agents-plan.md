@@ -137,3 +137,57 @@ A firmer system prompt did not change that. So the refusal is **enforced in code
 writes are recorded on the run as `name:args` signatures, an identical re-ask is auto-
 rejected without troubling the person, and the second decline of a tool closes that tool.
 Prompts are not a control surface; the graph is.
+
+
+## 7. The run screen
+
+Two panes, because the work and the conversation about the work are different things.
+
+**Left — the canvas.** What the run built, rendered as the thing itself: a table the agent
+is designing appears as a grid with its real columns and types *before* anyone approves it.
+That is the point — you approve by looking at the artefact, not by reading a sentence about
+it. Derived from the run's own steps and pending action rather than stored separately, so
+there is nothing that can disagree with what the agent actually did.
+
+**Right — the conversation.** Live activity line, the plan card, the approval gate when one
+is open, the finding rendered as markdown, then the trail. Polling at 900ms, not streaming:
+progress here changes at the granularity of a todo flipping or a subagent returning, which
+is seconds apart, not tokens apart.
+
+### 7.1 Live progress is not asked for, it is produced
+
+Three mechanisms, because the obvious one does not work on its own:
+
+1. **The plan is generated before the run starts** (`lib/agents/planner.ts`), by one
+   structured call, and written down immediately. The alternative was tried: the agent has
+   `write_todos`, is told emphatically to use it first, and produced runs whose plan was
+   empty from the first poll to the last — which on screen is indistinguishable from a hang.
+   The plan is then *seeded* as the agent's `todos` state, so its own ticks become an update
+   to a list that exists rather than a creation from nothing.
+2. **The pointer advances on milestones** — a subagent returning, a write being prepared.
+   Monotonic, and the agent's own ticks win where it bothers to make them. Progress that can
+   go backwards is worse than progress that is approximate.
+3. **An activity line derived from the newest step**, so "what is it doing right now" is
+   answered from what is really executing rather than from anything the agent announced.
+
+### 7.2 Modes gate tools
+
+Ask · Plan · Do. `ask` and `plan` hold **no write tools at all**, so the difference is real
+rather than a rephrased instruction — a mode selector that only changes the prompt is a
+promise the graph does not keep.
+
+That was necessary but not sufficient. In `ask` mode, with no write tools, the agent was
+asked to create a table, wrote a *file* describing one, and reported **"I have successfully
+created a database table"**. The gate held perfectly; the sentence lied, which is worse than
+a refusal because a person reads the sentence and not the database. Both read-only modes now
+carry an explicit "you did not do it" clause, and `ops:check` asserts the claim never
+appears — the same failure the modelling agent had when it narrated a scenario it never
+proposed.
+
+### 7.3 Two planner bugs worth remembering
+
+- **It copied the example title out of its own system prompt.** The prompt said the title
+  should read like `"Onboarding vs Forecast", not "Task"` — so a marketing-spend task got the
+  title "Onboarding vs Forecast". A concrete sample where a shape was meant.
+- **It planned work no tool can do**, ending with "populate the table with initial data".
+  The prompt now states what the agent cannot do as explicitly as what it can.

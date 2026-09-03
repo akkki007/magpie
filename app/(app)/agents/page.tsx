@@ -5,7 +5,7 @@ import { Bot } from "lucide-react";
 
 import { Rail } from "@/components/app/rail";
 import { Topbar } from "@/components/app/topbar";
-import { Spawn } from "@/components/agents/spawn";
+import { SpawnPanel } from "@/components/agents/spawn-panel";
 import { db } from "@/lib/db";
 import { initialsOf } from "@/lib/initials";
 import { getSession } from "@/lib/session";
@@ -34,11 +34,17 @@ export default async function AgentsPage() {
 
   // Scoped to the person who spawned them, the same reasoning AgentChat uses: a run is
   // somebody's own line of questioning, not a shared record of the model.
+  const midnight = new Date();
+  midnight.setHours(0, 0, 0, 0);
+  const runsToday = await db.agentRun.count({
+    where: { actorId: session.user.id, createdAt: { gte: midnight } },
+  });
+
   const runs = await db.agentRun.findMany({
     where: { actorId: session.user.id },
     orderBy: { createdAt: "desc" },
     take: 50,
-    select: { id: true, task: true, status: true, createdAt: true, plan: true },
+    select: { id: true, task: true, status: true, createdAt: true, plan: true, planTitle: true, mode: true },
   });
 
   return (
@@ -57,7 +63,11 @@ export default async function AgentsPage() {
             </p>
 
             <div className="mt-4">
-              <Spawn suggestions={SUGGESTIONS} />
+              <SpawnPanel
+                suggestions={SUGGESTIONS}
+                modelName={process.env.OPENAI_MODEL ?? "gpt-5.6"}
+                runsToday={runsToday}
+              />
             </div>
 
             <h2 className="mt-8 mb-2 text-[11px] font-semibold tracking-[0.06em] text-ink-faint uppercase">
@@ -79,9 +89,12 @@ export default async function AgentsPage() {
                           <Bot className="h-3.5 w-3.5 text-violet-500" strokeWidth={1.75} aria-hidden />
                         </span>
                         <span className="min-w-0 flex-1">
-                          <span className="block truncate text-[13px] font-medium text-ink">{run.task}</span>
+                          <span className="block truncate text-[13px] font-medium text-ink">
+                            {run.planTitle ?? run.task}
+                          </span>
                           <span className="mt-0.5 block text-[11px] text-ink-faint">
                             {run.createdAt.toISOString().slice(0, 16).replace("T", " ")}
+                            {` · ${run.mode}`}
                             {todos.length > 0 && ` · ${done}/${todos.length} tasks`}
                           </span>
                         </span>

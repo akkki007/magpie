@@ -8,6 +8,8 @@ import type { Actor } from "@/lib/model/changesets";
 import { readModel } from "@/lib/model/persist";
 
 import { createFinanceOpsAgent } from "./finance-ops";
+import { makePlan } from "./planner";
+import type { Mode } from "./modes";
 import { WRITE_TOOLS } from "./tools";
 
 /**
@@ -97,21 +99,72 @@ export async function resumeRun(
     todos: ((run.plan as Todo[] | null) ?? []),
     files: ((run.files as Record<string, unknown> | null) ?? {}),
     declined,
+    mode: (run.mode as Mode) ?? "do",
   });
 }
 
 const steps = (run: { steps: unknown }) => ((run.steps as Step[] | null) ?? []);
 
-export async function executeRun(runId: string, task: string, actor: Actor): Promise<void> {
-  await drive(runId, { messages: [{ role: "user", content: task }] }, actor, {
-    steps: [],
-    todos: [],
-    files: {},
-    declined: [],
-  });
+/** The model and tables a run reads. Loaded twice per run — once to plan, once to work. */
+async function loadContext() {
+  const [model, summaries] = await Promise.all([readModel(db, MODEL_SLUG), listTables(db)]);
+  const tables = (await Promise.all(summaries.map((s) => readTable(db, s.slug)))).filter(
+    (t): t is Table => t !== null,
+  );
+  const modelRow = await db.model.findUnique({ where: { slug: MODEL_SLUG }, select: { id: true } });
+  if (!model || !modelRow) return null;
+  return { model, modelId: modelRow.id, tables };
 }
 
-type Carry = { steps: Step[]; todos: Todo[]; files: Record<string, unknown>; declined: string[] };
+export async function executeRun(runId: string, task: string, actor: Actor, mode: Mode = "do"): Promise<void> {
+  const context = await loadContext();
+  if (!context) {
+    await fail(runId, "No model is seeded — run `bun run seed`.");
+    return;
+  }
+
+  /**
+   * Plan first, and write it down before the agent starts.
+   *
+   * This is what makes progress visible from the first second. The alternative — ask the
+   * agent to plan and read whatever it wrote — was tried and produced runs whose plan was
+   * empty from start to finish, which on screen is indistinguishable from a hang.
+   */
+  await db.agentRun.update({
+    where: { id: runId },
+    data: { activity: "Working out a plan" },
+  });
+
+  const plan = await makePlan(task, context.model, context.tables);
+  const todos: Todo[] = plan.tasks.map((content, index) => ({
+    content,
+    // The first task starts in progress, because it does: the agent begins work the moment
+    // this returns. Leaving everything pending would under-report by one step forever.
+    status: index === 0 ? "in_progress" : "pending",
+  }));
+
+  await db.agentRun.update({
+    where: { id: runId },
+    data: {
+      plan: asJson(todos),
+      planTitle: plan.title,
+      planNote: plan.description,
+      activity: "Starting",
+    },
+  });
+
+  await drive(
+    runId,
+    // The plan is seeded into the agent's own `todos` state, so `write_todos` becomes an
+    // *update* to a list that already exists rather than a creation from nothing — a much
+    // easier instruction to follow, and the ticks stay its own honest reporting.
+    { messages: [{ role: "user", content: task }], todos },
+    actor,
+    { steps: [], todos, files: {}, declined: [], mode },
+  );
+}
+
+type Carry = { steps: Step[]; todos: Todo[]; files: Record<string, unknown>; declined: string[]; mode: Mode };
 
 /**
  * What a write *is*, for the purpose of "you already asked me that".
@@ -145,6 +198,71 @@ function stable(value: unknown): string {
 const MAX_REDECLINES = 2;
 
 /**
+ * What to show as the live activity line.
+ *
+ * The step trail is a record; this is the one sentence that answers "what is happening right
+ * now", which is the question someone staring at a running job actually has. Derived from
+ * the newest step rather than announced by the agent, so it cannot drift from what is
+ * really executing.
+ */
+const ACTIVITY: Record<string, string> = {
+  write_todos: "Updating the plan",
+  write_file: "Writing up findings",
+  read_file: "Re-reading its notes",
+  calculate: "Doing the arithmetic",
+  getModelOutline: "Reading the model outline",
+  getVariable: "Looking up a variable",
+  getSeries: "Reading a series",
+  runScenario: "Testing a scenario",
+  listTables: "Listing the tables",
+  sampleTable: "Sampling a table",
+  aggregateTable: "Rolling records into periods",
+  listBoards: "Looking at the boards",
+  createTable: "Designing a table",
+  proposeModelChanges: "Preparing a proposal",
+  addBoardTile: "Preparing a board tile",
+};
+
+/**
+ * Advance the plan pointer on milestones the agent actually reached.
+ *
+ * The agent has `write_todos` and its list is seeded, so it *can* tick items off — and
+ * sometimes does. It cannot be relied on: a short run marked task one in progress and never
+ * touched the list again, which on screen is a plan frozen at 1 of 4 while the trail plainly
+ * shows work happening.
+ *
+ * So the pointer also follows **milestones**: a subagent returning, or a write being
+ * prepared. Those are real, they are the natural boundaries between plan items, and they
+ * only ever move forwards. Monotonic on purpose — progress that can go backwards is worse
+ * than progress that is approximate, and this never claims more than the agent has done.
+ *
+ * The agent's own ticks still win where they exist; this only fills in the ones it left
+ * behind.
+ */
+function advance(todos: Todo[], steps: Step[]): Todo[] {
+  const milestones = steps.filter(
+    (step) => step.kind === "subagent" || WRITE_TOOLS.includes(step.name as (typeof WRITE_TOOLS)[number]),
+  ).length;
+
+  const reported = todos.filter((t) => t.status === "completed").length;
+  const reached = Math.min(Math.max(reported, milestones), todos.length);
+
+  return todos.map((todo, index) => {
+    if (todo.status === "completed") return todo;
+    if (index < reached) return { ...todo, status: "completed" as const };
+    if (index === reached) return { ...todo, status: "in_progress" as const };
+    return { ...todo, status: "pending" as const };
+  });
+}
+
+function activityOf(step: Step | undefined): string {
+  if (!step) return "Working";
+  if (step.kind === "subagent") return `Asking the ${step.name}`;
+  if (step.kind === "message") return "Writing the answer";
+  return ACTIVITY[step.name] ?? `Running ${step.name}`;
+}
+
+/**
  * One driver for both entry points.
  *
  * Starting a run and resuming a halted one differ only in what is handed to the graph — a
@@ -159,18 +277,13 @@ async function drive(
   actor: Actor,
   carry: Carry,
 ): Promise<void> {
-  const [model, summaries] = await Promise.all([readModel(db, MODEL_SLUG), listTables(db)]);
-  const tables = (await Promise.all(summaries.map((s) => readTable(db, s.slug)))).filter(
-    (t): t is Table => t !== null,
-  );
-
-  const modelRow = await db.model.findUnique({ where: { slug: MODEL_SLUG }, select: { id: true } });
-  if (!model || !modelRow) {
+  const context = await loadContext();
+  if (!context) {
     await fail(runId, "No model is seeded — run `bun run seed`.");
     return;
   }
 
-  const agent = await createFinanceOpsAgent({ model, modelId: modelRow.id, tables, actor });
+  const agent = await createFinanceOpsAgent({ ...context, actor }, carry.mode);
   const config = { configurable: { thread_id: runId }, recursionLimit: 60 };
 
   const steps = carry.steps;
@@ -188,7 +301,12 @@ async function drive(
     lastWrite = now;
     await db.agentRun.update({
       where: { id: runId },
-      data: { plan: asJson(todos), steps: asJson(steps), files: asJson(files) },
+      data: {
+        plan: asJson(advance(todos, steps)),
+        steps: asJson(steps),
+        files: asJson(files),
+        activity: activityOf(steps.at(-1)),
+      },
     });
   };
 
@@ -244,7 +362,10 @@ async function drive(
           where: { id: runId },
           data: {
             status: "DONE",
-            plan: asJson(todos),
+            activity: null,
+            // Every task complete: a finished run still showing pending work reads as
+            // abandoned, and the run did in fact finish.
+            plan: asJson(todos.map((todo) => ({ ...todo, status: "completed" as const }))),
             steps: asJson(steps),
             files: asJson(files),
             pending: asJson([]),
@@ -299,11 +420,12 @@ async function drive(
           where: { id: runId },
           data: {
             status: "DONE",
-            plan: asJson(todos),
+            plan: asJson(advance(todos, steps)),
             steps: asJson(steps),
             files: asJson(files),
             pending: asJson([]),
             declined: asJson(declined),
+            activity: null,
             result:
               "Stopped: the agent kept asking to make a change that was already declined, so the run was ended. Nothing was written.",
             finishedAt: new Date(),
@@ -324,7 +446,8 @@ async function drive(
         where: { id: runId },
         data: {
           status: "WAITING",
-          plan: asJson(todos),
+          activity: null,
+          plan: asJson(advance(todos, steps)),
           steps: asJson(steps),
           files: asJson(files),
           pending: asJson(pending),
@@ -353,7 +476,7 @@ function resumeFloor(seen: number, total: number): number {
 async function fail(runId: string, error: string) {
   await db.agentRun.update({
     where: { id: runId },
-    data: { status: "FAILED", error, finishedAt: new Date() },
+    data: { status: "FAILED", error, activity: null, finishedAt: new Date() },
   });
 }
 

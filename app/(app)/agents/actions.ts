@@ -4,6 +4,7 @@ import { after } from "next/server";
 import { revalidatePath } from "next/cache";
 
 import { executeRun, resumeRun } from "@/lib/agents/run";
+import type { Mode } from "@/lib/agents/modes";
 import { db } from "@/lib/db";
 import { getSession } from "@/lib/session";
 
@@ -27,7 +28,7 @@ async function actor() {
   return { id: session.user.id, name: session.user.name || session.user.email };
 }
 
-export async function spawnRun(task: string): Promise<Result<{ id: string }>> {
+export async function spawnRun(task: string, mode: Mode = "do"): Promise<Result<{ id: string }>> {
   const who = await actor();
   if (!who) return { ok: false, error: "Your session has expired — sign in again." };
 
@@ -41,6 +42,7 @@ export async function spawnRun(task: string): Promise<Result<{ id: string }>> {
   const run = await db.agentRun.create({
     data: {
       task: trimmed,
+      mode,
       actorId: who.id,
       actorName: who.name,
       status: "RUNNING",
@@ -52,7 +54,7 @@ export async function spawnRun(task: string): Promise<Result<{ id: string }>> {
 
   after(async () => {
     try {
-      await executeRun(run.id, trimmed, who);
+      await executeRun(run.id, trimmed, who, mode);
     } catch (error) {
       // executeRun handles its own failures; this is the last resort, so a run can never
       // be left RUNNING forever with nobody coming back to it.

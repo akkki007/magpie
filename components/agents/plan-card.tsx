@@ -27,19 +27,27 @@ const STATUS = {
 
 export function PlanCard({
   task,
+  title,
+  note,
   todos,
   steps,
   running,
+  activity,
 }: {
   task: string;
+  title?: string | null;
+  note?: string | null;
   todos: Todo[];
   steps: Step[];
   running: boolean;
+  /** What the run is doing right now, from `lib/agents/run.ts`. */
+  activity?: string | null;
 }) {
-  const [open, setOpen] = useState(running);
+  const [open, setOpen] = useState(true);
 
   const done = todos.filter((t) => t.status === "completed").length;
   const total = todos.length;
+  const activeIndex = todos.findIndex((t) => t.status === "in_progress");
 
   return (
     <section className="rounded-card border border-line bg-surface">
@@ -47,7 +55,7 @@ export function PlanCard({
         <Sparkles className="h-3.5 w-3.5 text-violet-500" strokeWidth={1.75} aria-hidden />
         {running ? (
           <>
-            <span>Working</span>
+            <span>{activity ?? "Working"}</span>
             <Loader2 className="h-3 w-3 animate-spin text-ink-faint" aria-hidden />
           </>
         ) : (
@@ -63,11 +71,24 @@ export function PlanCard({
         aria-expanded={open}
         className="mt-2.5 flex w-full items-center gap-2 border-t border-line px-4 py-3 text-left transition-colors hover:bg-hover"
       >
-        <span className="text-[14px] font-medium text-ink">Task list</span>
-        {total > 0 && (
-          <span className="text-[12px] text-ink-muted">
-            {done}/{total} completed
-          </span>
+        {/* The header answers "where has it got to" without expanding anything, which is
+            the question someone glancing at a running job actually has. */}
+        {running && activeIndex >= 0 ? (
+          <>
+            <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-ink-faint" aria-hidden />
+            <span className="text-[14px] font-medium text-ink">
+              Task {activeIndex + 1} of {total} in progress
+            </span>
+          </>
+        ) : (
+          <>
+            <span className="text-[14px] font-medium text-ink">Task list</span>
+            {total > 0 && (
+              <span className="text-[12px] text-ink-muted">
+                {done}/{total} completed
+              </span>
+            )}
+          </>
         )}
         <span className="ml-auto text-ink-faint">
           {open ? (
@@ -80,7 +101,10 @@ export function PlanCard({
 
       {open && (
         <div className="border-t border-line px-4 py-3.5">
-          <p className="text-[13px] leading-[1.65] text-ink-muted">{task}</p>
+          {title && <p className="text-[14px] font-medium text-ink">{title}</p>}
+          <p className={cn("text-[13px] leading-[1.65] text-ink-muted", title && "mt-1")}>
+            {note || task}
+          </p>
 
           {total === 0 ? (
             <p className="mt-3 text-[12px] text-ink-faint">
@@ -109,7 +133,9 @@ export function PlanCard({
                         )}
                       >
                         {isDone && <Check className="h-2.5 w-2.5 text-white" strokeWidth={3} />}
-                        {isActive && <span className="h-1.5 w-1.5 rounded-full bg-blue-600" />}
+                        {isActive && (
+                          <Loader2 className="h-2.5 w-2.5 animate-spin text-blue-600" aria-hidden />
+                        )}
                       </span>
                       <span
                         className={cn(

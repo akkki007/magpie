@@ -13,6 +13,8 @@ import { db } from "../lib/db";
 import { executeRun, resumeRun } from "../lib/agents/run";
 import { createFinanceOpsAgent } from "../lib/agents/finance-ops";
 import { buildOpsTools, WRITE_TOOLS } from "../lib/agents/tools";
+import { toolsFor } from "../lib/agents/modes";
+import { makePlan } from "../lib/agents/planner";
 import { listTables, readTable } from "../lib/data/persist";
 import type { Table } from "../lib/data/types";
 import { readModel } from "../lib/model/persist";
@@ -75,6 +77,12 @@ for (const reader of ["getSeries", "aggregateTable", "sampleTable", "getModelOut
   check(`the supervisor cannot ${reader} itself`, !supervisorTools.has(reader));
 }
 
+/* ── Modes gate tools, they do not just reword the prompt ─────────────────*/
+
+check("ask mode has no write tools", toolsFor("ask", WRITE_TOOLS).length === 0);
+check("plan mode has no write tools", toolsFor("plan", WRITE_TOOLS).length === 0);
+check("do mode has all of them", toolsFor("do", WRITE_TOOLS).length === WRITE_TOOLS.length);
+
 /* ── Grounding, through the tools ─────────────────────────────────────────*/
 
 const propose = tools.find((t) => t.name === "proposeModelChanges")!;
@@ -111,6 +119,45 @@ check("a duplicate slug is refused", String(duplicate).includes("already"), Stri
 /* ── Live: the interrupt, and that it actually holds ──────────────────────*/
 
 if (process.argv.includes("--live") && process.env.OPENAI_API_KEY) {
+  /**
+   * The plan is generated deterministically before a run, so it always exists. Asserted
+   * because the alternative was tried: asked to plan, the agent produced runs whose todo
+   * list was empty from start to finish, which on screen is indistinguishable from a hang.
+   */
+  const plan = await makePlan("Create a table for tracking office expenses", model, tables);
+  check("live: a plan is produced", plan.tasks.length >= 2, `${plan.tasks.length} tasks`);
+  check("live: …with a title about this task", /expense/i.test(plan.title), plan.title);
+  /* The planner once copied an example title from its own system prompt onto an unrelated task. */
+  check("live: …and not a title copied from the prompt", !/onboarding vs forecast/i.test(plan.title), plan.title);
+  /* And it must not plan work the agent has no tool for. */
+  check(
+    "live: …and does not plan to add rows",
+    !plan.tasks.some((t) => /populate|insert row|add rows|enter data/i.test(t)),
+    plan.tasks.join(" | "),
+  );
+
+  /**
+   * Ask mode must neither write nor *claim* to have written. The gate held on its own; the
+   * claim did not — the agent wrote a file describing a table and reported "I have
+   * successfully created a database table", which a person reads instead of the database.
+   */
+  const askTask = "Create a database table for tracking office expenses.";
+  const askRun = await db.agentRun.create({
+    data: { task: askTask, actorName: "ops:check", mode: "ask", threadId: crypto.randomUUID() },
+  });
+  const tablesBeforeAsk = await db.dataTable.count();
+  await executeRun(askRun.id, askTask, { id: null, name: "ops:check" }, "ask");
+  const asked = await db.agentRun.findUnique({ where: { id: askRun.id } });
+
+  check("live: ask mode never halts for approval", asked?.status === "DONE", `status ${asked?.status}`);
+  check("live: ask mode writes nothing", (await db.dataTable.count()) === tablesBeforeAsk);
+  check(
+    "live: ask mode does not claim it built anything",
+    !/\b(i have|i've)\s+(successfully\s+)?(created|added|built|set up)\b/i.test(asked?.result ?? ""),
+    (asked?.result ?? "").slice(0, 120),
+  );
+  await db.agentRun.delete({ where: { id: askRun.id } });
+
   const task = "Create a database table for tracking vendor invoices. Five columns is plenty.";
   const run = await db.agentRun.create({ data: { task, actorName: "ops:check", threadId: crypto.randomUUID() } });
   const before = await db.dataTable.count();

@@ -3,6 +3,7 @@ import { createDeepAgent } from "deepagents";
 import { todoListMiddleware } from "langchain";
 
 import { buildOpsTools, WRITE_TOOLS, type ToolContext } from "./tools";
+import { modeGuidance, toolsFor, type Mode } from "./modes";
 import { checkpointer } from "./checkpointer";
 
 /**
@@ -124,7 +125,7 @@ that support it, then what to do. No preamble, no restating the question.
 Cite only figures that appear in the files you were given. If the evidence does not support a
 claim, drop the claim.`;
 
-export async function createFinanceOpsAgent(ctx: ToolContext) {
+export async function createFinanceOpsAgent(ctx: ToolContext, mode: Mode = "do") {
   const tools = buildOpsTools(ctx);
   const byName = (names: readonly string[]) => tools.filter((t) => names.includes(t.name));
 
@@ -145,8 +146,10 @@ export async function createFinanceOpsAgent(ctx: ToolContext) {
    */
   return createDeepAgent({
     model: opsModel(),
-    systemPrompt: SUPERVISOR_PROMPT,
-    tools: byName([...WRITE_TOOLS, "calculate"]),
+    systemPrompt: `${SUPERVISOR_PROMPT}\n\n${modeGuidance(mode)}`,
+    // The mode decides which writes exist at all — see `lib/agents/modes.ts`. In `ask`
+    // and `plan` this list is just the calculator.
+    tools: byName([...toolsFor(mode, WRITE_TOOLS), "calculate"]),
     subagents: [
       {
         name: "model-analyst",
@@ -188,7 +191,7 @@ export async function createFinanceOpsAgent(ctx: ToolContext) {
      * tools are deliberately absent from this list — an agent that needs approval to *look*
      * at a number is an agent nobody will use.
      */
-    interruptOn: Object.fromEntries(WRITE_TOOLS.map((name) => [name, true])),
+    interruptOn: Object.fromEntries(toolsFor(mode, WRITE_TOOLS).map((name) => [name, true])),
     /** Durable, so a WAITING run survives the gap between halting and being approved. */
     checkpointer: await checkpointer(),
   });
