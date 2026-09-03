@@ -6,6 +6,7 @@ import { ArrowLeft } from "lucide-react";
 import { Rail } from "@/components/app/rail";
 import { RunView } from "@/components/agents/run-view";
 import { MODES } from "@/lib/agents/modes";
+import type { Artifact } from "@/lib/agents/artifacts";
 import type { PendingAction, Step, Todo } from "@/lib/agents/run";
 import { db } from "@/lib/db";
 import { initialsOf } from "@/lib/initials";
@@ -76,6 +77,7 @@ export default async function AgentRunPage({ params }: PageProps<"/agents/[id]">
             plan: (run.plan as Todo[] | null) ?? [],
             steps: (run.steps as Step[] | null) ?? [],
             files: (run.files as Record<string, unknown> | null) ?? {},
+            artifacts: (run.artifacts as Artifact[] | null) ?? [],
             pending: (run.pending as PendingAction[] | null) ?? [],
             result: run.result,
             error: run.error,

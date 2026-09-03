@@ -221,3 +221,27 @@ outside the model and exactly what grounding is for. `groundProposal` now checks
 against the variable's dimension, requires `TOTAL` on an undimensioned row, and rejects a
 period past the horizon — with an error that names the real members. Pinned in
 `agent:check`, since the bug lives in the modelling module rather than here.
+
+
+## 9. The canvas card has to outlive the decision
+
+The first version derived the canvas from `run.pending`. That is correct right up until the
+moment it matters: `pending` is cleared on approval, so the table card appeared *while*
+permission was being asked and vanished the instant it was granted — the one point at which
+a person most wants to look at what they just allowed. Reported from the screen, not caught
+by a test, because every assertion was about the halted state.
+
+Artifacts are now a durable column on the run, appended when a write is proposed and updated
+in place afterwards. Four states, and the distinction between the last two is deliberate:
+
+| | |
+|---|---|
+| `proposed` | halted, waiting for a person |
+| `created` | the tool ran and returned success |
+| `declined` | a person said no |
+| `failed` | a person said yes and the tool refused it — grounding caught something |
+
+`created` is set from the **tool's own result**, not from the approval, so a card marked
+created means the write actually landed rather than that someone permitted it. A created
+table carries its slug and the card links to the real thing. Collapsing `failed` into
+`declined` would blame the wrong party.

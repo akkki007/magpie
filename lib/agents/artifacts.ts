@@ -1,4 +1,4 @@
-import type { PendingAction, Step } from "./run";
+import type { PendingAction } from "./run";
 
 /**
  * What a run has produced, for the canvas (`docs/agents-plan.md` A5).
@@ -8,13 +8,22 @@ import type { PendingAction, Step } from "./run";
  * difference between an approval screen and a diff — you are looking at the thing, and the
  * chat beside it is the conversation about the thing.
  *
- * Derived from the run's own steps and pending action rather than stored separately. A
- * second store would be a second thing that can disagree with what the agent actually did.
+ * **Stored on the run, not derived from `pending`.** The first version read the pending
+ * action, which is right up until the moment it matters: `pending` is cleared on approval,
+ * so the table card appeared while permission was being asked and vanished the instant it
+ * was granted — the one point at which a person most wants to look at what they just
+ * allowed. A record of the work has to outlive the decision about it, so each artifact is
+ * appended when it is proposed and then *updated in place* as it is approved, created or
+ * declined.
  */
+
+export type ArtifactStatus = "proposed" | "created" | "declined" | "failed";
 
 export type TableDraft = {
   kind: "table";
-  status: "proposed" | "created" | "declined";
+  status: ArtifactStatus;
+  /** Set once the table really exists, so the canvas can link to it. */
+  slug?: string;
   name: string;
   description?: string;
   fields: { name: string; type: string; options?: string[] }[];
@@ -22,46 +31,63 @@ export type TableDraft = {
 
 export type ProposalDraft = {
   kind: "proposal";
-  status: "proposed" | "created" | "declined";
+  status: ArtifactStatus;
   label: string;
   commands: unknown[];
 };
 
 export type TileDraft = {
   kind: "tile";
-  status: "proposed" | "created" | "declined";
+  status: ArtifactStatus;
   boardSlug: string;
   spec: unknown;
 };
 
-export type Artifact = TableDraft | ProposalDraft | TileDraft;
+/**
+ * The union *without* its key, so `fromArgs` can return one member of it.
+ *
+ * `Omit<Artifact, "key">` looks equivalent and is not: `Omit` on a union collapses it to the
+ * properties all three members share, which is `kind` and `status` — losing the fields that
+ * make each card renderable.
+ */
+type Draft = TableDraft | ProposalDraft | TileDraft;
+
+/** Keyed by tool name plus arguments, which is how an update finds the card it belongs to. */
+export type Artifact = Draft & { key: string };
 
 type Args = Record<string, unknown>;
 
 /**
- * A pending action becomes an artifact card. `status` comes from the *step* that carries the
- * same tool name, so a declined table stays on the canvas marked declined rather than
- * vanishing — a run you come back to has to show what was refused, not just what landed.
+ * Append newly-proposed writes, leaving anything already recorded alone.
+ *
+ * Keyed by the same signature the declined-ledger uses, so a re-proposal of the identical
+ * thing updates its card rather than stacking a duplicate beside it.
  */
-export function artifactsOf(pending: PendingAction[], steps: Step[]): Artifact[] {
-  const statusOf = (name: string): Artifact["status"] => {
-    const step = [...steps].reverse().find((s) => s.name === name);
-    if (step?.detail === "declined") return "declined";
-    if (step?.detail === "waiting for approval") return "proposed";
-    return "created";
-  };
-
-  const out: Artifact[] = [];
+export function recordProposed(existing: Artifact[], pending: PendingAction[], key: (a: PendingAction) => string): Artifact[] {
+  const out = [...existing];
 
   for (const action of pending) {
-    const artifact = fromArgs(action.name, action.args as Args, statusOf(action.name));
-    if (artifact) out.push(artifact);
+    const signature = key(action);
+    const artifact = fromArgs(action.name, action.args as Args, "proposed");
+    if (!artifact) continue;
+
+    const at = out.findIndex((a) => a.key === signature);
+    const card = { ...artifact, key: signature } as Artifact;
+    if (at >= 0) out[at] = card;
+    else out.push(card);
   }
 
   return out;
 }
 
-function fromArgs(name: string, args: Args, status: Artifact["status"]): Artifact | null {
+/** Move every card still awaiting a decision to `status`. */
+export function settle(existing: Artifact[], status: ArtifactStatus, detail?: { slug?: string }): Artifact[] {
+  return existing.map((artifact) =>
+    artifact.status === "proposed" ? { ...artifact, status, ...(detail ?? {}) } : artifact,
+  );
+}
+
+function fromArgs(name: string, args: Args, status: ArtifactStatus): Draft | null {
   if (name === "createTable") {
     const fields = Array.isArray(args.fields) ? (args.fields as Args[]) : [];
     return {

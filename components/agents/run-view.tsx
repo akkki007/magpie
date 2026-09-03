@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 import { readRun } from "@/app/(app)/agents/actions";
 import { Canvas } from "@/components/agents/canvas";
 import { Panel } from "@/components/agents/panel";
-import { artifactsOf } from "@/lib/agents/artifacts";
+import type { Artifact } from "@/lib/agents/artifacts";
 import type { PendingAction, Step, Todo } from "@/lib/agents/run";
 
 export type RunSnapshot = {
@@ -19,6 +19,7 @@ export type RunSnapshot = {
   plan: Todo[];
   steps: Step[];
   files: Record<string, unknown>;
+  artifacts: Artifact[];
   pending: PendingAction[];
   result: string | null;
   error: string | null;
@@ -64,6 +65,7 @@ export function RunView({
         plan: (next.plan as Todo[] | null) ?? [],
         steps: (next.steps as Step[] | null) ?? [],
         files: (next.files as Record<string, unknown> | null) ?? {},
+        artifacts: (next.artifacts as Artifact[] | null) ?? [],
         pending: (next.pending as PendingAction[] | null) ?? [],
         result: next.result,
         error: next.error,
@@ -76,7 +78,6 @@ export function RunView({
     };
   }, [live, run.id]);
 
-  const artifacts = artifactsOf(run.pending, run.steps);
   const files = Object.entries(run.files).filter(
     (entry): entry is [string, string] => typeof entry[1] === "string",
   );
@@ -84,7 +85,7 @@ export function RunView({
   return (
     <div className="flex min-h-0 flex-1 overflow-hidden">
       <div className="min-w-0 flex-1 overflow-y-auto bg-app">
-        <Canvas artifacts={artifacts} files={files} activity={run.activity} />
+        <Canvas artifacts={run.artifacts} files={files} activity={run.activity} />
       </div>
 
       <aside

@@ -195,6 +195,18 @@ if (process.argv.includes("--live") && process.env.OPENAI_API_KEY) {
   check("live: the pending write is named", pending[0]?.name === "createTable", JSON.stringify(pending[0]?.name));
 
   /**
+   * The canvas card must survive the decision about it.
+   *
+   * It used to be derived from `pending`, which is cleared on approval — so the table
+   * appeared while permission was being asked and vanished the instant it was granted,
+   * which is the one moment a person most wants to look at what they just allowed.
+   */
+  type Card = { kind: string; status: string };
+  const proposedCards = (halted?.artifacts as Card[] | null) ?? [];
+  check("live: the artifact is recorded while waiting", proposedCards.length === 1, `${proposedCards.length} cards`);
+  check("live: …as proposed", proposedCards[0]?.status === "proposed", proposedCards[0]?.status);
+
+  /**
    * Rejecting must leave the world untouched, and must not start a loop.
    *
    * The first version asserted the run reaches DONE in one step. It does not always: told
@@ -231,6 +243,15 @@ if (process.argv.includes("--live") && process.env.OPENAI_API_KEY) {
 
   const steps = (rejected?.steps as { name: string }[] | null) ?? [];
   check("live: the trail records the attempt", steps.some((s) => s.name === "createTable"));
+
+  /* And it is still on the canvas after the decision, marked with what happened. */
+  const settledCards = (rejected?.artifacts as Card[] | null) ?? [];
+  check("live: the artifact outlives the decision", settledCards.length >= 1, `${settledCards.length} cards`);
+  check(
+    "live: …and is no longer marked proposed",
+    settledCards.every((c) => c.status !== "proposed"),
+    settledCards.map((c) => c.status).join(","),
+  );
   console.log(`  live run: ${steps.map((s) => s.name).join(" → ")}`);
 
   await db.agentRun.delete({ where: { id: run.id } });

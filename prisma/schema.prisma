@@ -771,6 +771,11 @@ model AgentRun {
   steps     Json?
   /// The virtual filesystem the run wrote: its working notes and its output.
   files     Json?
+  /// Everything this run designed, in order, with what became of each one.
+  /// Durable on purpose: the canvas used to derive these from `pending`, which
+  /// is cleared on approval — so the table card vanished at the exact moment it
+  /// became real. A record of the work has to outlive the decision about it.
+  artifacts Json?
   /// Signatures of writes a person has already declined on this run. The agent is
   /// not trusted to remember — see `lib/agents/run.ts`.
   declined  Json?

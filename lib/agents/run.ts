@@ -9,6 +9,7 @@ import { readModel } from "@/lib/model/persist";
 
 import { createFinanceOpsAgent } from "./finance-ops";
 import { makePlan } from "./planner";
+import { recordProposed, settle, type Artifact } from "./artifacts";
 import type { Mode } from "./modes";
 import { WRITE_TOOLS } from "./tools";
 
@@ -81,6 +82,9 @@ export async function resumeRun(
   const declined = (run.declined as string[] | null) ?? [];
   const carriedSteps = steps(run);
 
+  const carriedArtifacts =
+    decision.type === "reject" ? settle(artifactsOf(run), "declined") : artifactsOf(run);
+
   if (decision.type === "reject") {
     for (const step of carriedSteps) {
       if (step.detail === "waiting for approval") step.detail = "declined";
@@ -99,11 +103,24 @@ export async function resumeRun(
     todos: ((run.plan as Todo[] | null) ?? []),
     files: ((run.files as Record<string, unknown> | null) ?? {}),
     declined,
+    artifacts: carriedArtifacts,
     mode: (run.mode as Mode) ?? "do",
   });
 }
 
 const steps = (run: { steps: unknown }) => ((run.steps as Step[] | null) ?? []);
+
+/**
+ * `createTable` returns JSON carrying the new table's url; pulled out so the canvas card can
+ * link to the real thing once it exists. Anything else has no slug and the card stays inert.
+ */
+function slugFrom(name: string, message: unknown): { slug?: string } | undefined {
+  if (name !== "createTable") return undefined;
+  const text = textOf((message as LooseMessage).content);
+  const match = /"url"\s*:\s*"\/databases\/([^"]+)"/.exec(text);
+  return match ? { slug: match[1] } : undefined;
+}
+const artifactsOf = (run: { artifacts: unknown }) => ((run.artifacts as Artifact[] | null) ?? []);
 
 /** The model and tables a run reads. Loaded twice per run — once to plan, once to work. */
 async function loadContext() {
@@ -160,11 +177,18 @@ export async function executeRun(runId: string, task: string, actor: Actor, mode
     // easier instruction to follow, and the ticks stay its own honest reporting.
     { messages: [{ role: "user", content: task }], todos },
     actor,
-    { steps: [], todos, files: {}, declined: [], mode },
+    { steps: [], todos, files: {}, declined: [], artifacts: [], mode },
   );
 }
 
-type Carry = { steps: Step[]; todos: Todo[]; files: Record<string, unknown>; declined: string[]; mode: Mode };
+type Carry = {
+  steps: Step[];
+  todos: Todo[];
+  files: Record<string, unknown>;
+  declined: string[];
+  artifacts: Artifact[];
+  mode: Mode;
+};
 
 /**
  * What a write *is*, for the purpose of "you already asked me that".
@@ -288,6 +312,7 @@ async function drive(
 
   const steps = carry.steps;
   const declined = carry.declined;
+  let artifacts = carry.artifacts;
   let todos = carry.todos;
   let files = carry.files;
   let seenMessages = 0;
@@ -305,6 +330,7 @@ async function drive(
         plan: asJson(advance(todos, steps)),
         steps: asJson(steps),
         files: asJson(files),
+        artifacts: asJson(artifacts),
         activity: activityOf(steps.at(-1)),
       },
     });
@@ -338,7 +364,17 @@ async function drive(
         const messages = Array.isArray(state.messages) ? state.messages : [];
         if (messages.length > seenMessages) {
           const fresh = messages.slice(Math.max(seenMessages, resumeFloor(seenMessages, messages.length)));
-          for (const message of fresh) steps.push(...stepsFrom(message));
+          for (const message of fresh) {
+            const produced = stepsFrom(message);
+            steps.push(...produced);
+
+            // A write that actually ran settles its card, so "created" on the canvas means
+            // the tool returned success — not merely that a human said yes.
+            for (const step of produced) {
+              if (step.detail === "done") artifacts = settle(artifacts, "created", slugFrom(step.name, message));
+              else if (step.detail?.startsWith("refused")) artifacts = settle(artifacts, "failed");
+            }
+          }
         }
         seenMessages = messages.length;
 
@@ -368,6 +404,7 @@ async function drive(
             plan: asJson(todos.map((todo) => ({ ...todo, status: "completed" as const }))),
             steps: asJson(steps),
             files: asJson(files),
+            artifacts: asJson(artifacts),
             pending: asJson([]),
             declined: asJson(declined),
             result: finalText(snapshot.values ?? {}),
@@ -434,7 +471,14 @@ async function drive(
         return;
       }
 
-      /* A genuinely new write. Mark the step and hand it to a human. */
+      /**
+       * A genuinely new write. Record the artifact *before* asking, so the canvas has the
+       * card whatever the person decides — and so it survives the approval that clears
+       * `pending`.
+       */
+      artifacts = recordProposed(artifacts, pending, signature);
+
+      /* Mark the step and hand it to a human. */
       const halted = pending[0]?.name;
       const last = [...steps].reverse().find((step) => step.name === halted);
       if (last) last.detail = "waiting for approval";
@@ -450,6 +494,7 @@ async function drive(
           plan: asJson(advance(todos, steps)),
           steps: asJson(steps),
           files: asJson(files),
+          artifacts: asJson(artifacts),
           pending: asJson(pending),
           declined: asJson(declined),
           result: describeInterrupt(interrupts),
@@ -489,6 +534,7 @@ async function fail(runId: string, error: string) {
 
 type LooseMessage = {
   getType?: () => string;
+  tool_call_id?: string;
   _getType?: () => string;
   content?: unknown;
   name?: string;
@@ -500,6 +546,25 @@ function stepsFrom(message: unknown): Step[] {
   const at = new Date().toISOString();
   const type = m.getType?.() ?? m._getType?.() ?? "";
   const out: Step[] = [];
+
+  /**
+   * A tool *result* is not a step of its own — it is the outcome of one that already exists.
+   * Returned here so the caller can settle the matching artifact: an approved write that the
+   * tool then refused ("Rejected: …") must not sit on the canvas marked created.
+   */
+  if (type === "tool" && m.name) {
+    const text = textOf(m.content);
+    if (WRITE_TOOLS.includes(m.name as (typeof WRITE_TOOLS)[number])) {
+      const failed = /^(Rejected|No table|No board|A table already|That name)/.test(text.trim());
+      out.push({
+        at,
+        kind: "tool",
+        name: m.name,
+        detail: failed ? `refused: ${truncate(text, 120)}` : "done",
+      });
+    }
+    return out;
+  }
 
   for (const call of m.tool_calls ?? []) {
     if (!call.name) continue;

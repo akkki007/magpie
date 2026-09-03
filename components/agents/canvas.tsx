@@ -1,9 +1,11 @@
 "use client";
 
+import Link from "next/link";
+
 import { CalendarDays, CaseSensitive, ChartColumn, DollarSign, FileText, Hash, ListFilter } from "lucide-react";
 
 import { cn } from "@/lib/cn";
-import type { Artifact } from "@/lib/agents/artifacts";
+import type { Artifact, ArtifactStatus } from "@/lib/agents/artifacts";
 
 /**
  * The canvas (`docs/agents-plan.md` A5) — the work, on the left, while the chat runs on the
@@ -23,17 +25,22 @@ const TYPE_ICON: Record<string, typeof Hash> = {
   SELECT: ListFilter,
 };
 
-const STATUS_LABEL = {
+const STATUS_LABEL: Record<ArtifactStatus, string> = {
   proposed: "awaiting approval",
   created: "created",
   declined: "declined",
-} as const;
+  // Approved by a person, then refused by the tool — grounding caught something. Distinct
+  // from "declined" on purpose: one is a human's decision, the other is a rejected write,
+  // and collapsing them would blame the wrong party.
+  failed: "not accepted",
+};
 
-const STATUS_TONE = {
+const STATUS_TONE: Record<ArtifactStatus, string> = {
   proposed: "bg-chip-amber text-ink",
   created: "bg-ok-bg text-ok-fg",
   declined: "bg-neg-bg text-neg-fg",
-} as const;
+  failed: "bg-neg-bg text-neg-fg",
+};
 
 export function Canvas({
   artifacts,
@@ -159,8 +166,16 @@ function ArtifactCard({ artifact }: { artifact: Artifact }) {
               </tr>
             </tbody>
           </table>
-          <p className="px-3.5 py-2 text-[11px] text-ink-faint">
-            {artifact.fields.length} columns · no rows yet
+          <p className="flex items-center gap-2 px-3.5 py-2 text-[11px] text-ink-faint">
+            <span>{artifact.fields.length} columns · no rows yet</span>
+            {artifact.status === "created" && artifact.slug && (
+              <Link
+                href={`/databases/${artifact.slug}`}
+                className="ml-auto font-medium text-blue-600 hover:underline"
+              >
+                Open table →
+              </Link>
+            )}
           </p>
         </div>
       )}
