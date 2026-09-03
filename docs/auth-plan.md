@@ -285,18 +285,27 @@ in `.env`, which is gitignored.
 ## 10. Magic link, and the rule it forced us to learn
 
 Provider 3 from §2 is built: `/sign-in/link` emails a one-time link, and opening it signs
-you in — creating the account first if the address is new. Mail goes out over Gmail SMTP
-with an app password (`lib/mail.ts`), which is a development and demo path: Gmail throttles
-and eventually flags bulk sending, so a real domain on Resend is still the production
-answer. Two variables in `.env`:
+you in — creating the account first if the address is new. Mail goes out over Resend
+(`lib/mail.ts`), sending from `magpie.akkki.tech`. This started on Gmail SMTP with an app
+password and moved once the cost showed up in the flow itself: a fresh SMTP connection —
+TCP, TLS, AUTH — ran ~3.5s on every send, and pooling it hangs indefinitely under Bun, so
+the four seconds were not negotiable while we still spoke SMTP. Resend is one HTTPS POST
+and does the SMTP part on its own side. One variable in `.env`:
 
 ```
-GMAIL_USER="you@gmail.com"
-GMAIL_APP_PASSWORD="<16-char app password, not the account password>"
+RESEND_API_KEY="re_..."
+MAIL_FROM="Magpie <hello@magpie.akkki.tech>"   # optional, this is the default
 ```
 
-Leave them unset and mail is printed to the server log instead of sent, so a fresh clone
-can walk the whole flow. `bun run mail:check` authenticates against Gmail without sending.
+Leave the key unset and mail is printed to the server log instead of sent, so a fresh clone
+can walk the whole flow. `bun run mail:check` proves the key works *and* that the sending
+domain is verified, without sending anything — a valid key on an unverified domain is the
+failure that would otherwise surface only when a real user asks for a link.
+
+One sharp edge worth knowing: Resend's SDK **returns** failures as `{ data: null, error }`
+rather than throwing. Unchecked, every failed send would look like a successful one, and
+`sendMagicLink` deliberately awaits `sendMail` so the form can tell the user the link did
+not go out. `lib/mail.ts` re-throws to keep that true.
 
 **Why the link is a separate page and not a toggle on `/sign-in`:** a toggle is client
 state, so with JavaScript blocked or still loading there is no way to reach the second

@@ -1,14 +1,17 @@
-import nodemailer from "nodemailer";
+import { Resend } from "resend";
 
 /**
- * Outbound mail. Gmail SMTP with an app password for now — the cheapest thing
- * that actually delivers while there is no domain to authenticate.
+ * Outbound mail, over Resend's HTTP API.
  *
- * It is deliberately one narrow function rather than an exported transporter:
- * everything that sends mail should have to describe what it is sending, and
- * swapping Gmail for Resend later should touch this file and nothing else.
- * Gmail will also rate-limit and eventually flag bulk sending, so this is a
- * development and demo path, not a production one.
+ * This replaced Gmail SMTP, which cost ~3.5s of TCP + TLS + AUTH handshake on *every*
+ * send because pooling could not be made to work under Bun (see the commit that removed
+ * it). A magic link the user waits four seconds for is a broken sign-in, so the fix was
+ * to stop speaking SMTP: Resend takes one HTTPS POST on an already-warm connection and
+ * does the SMTP part itself, asynchronously, on the other side.
+ *
+ * It is deliberately one narrow function rather than an exported client: everything that
+ * sends mail should have to describe what it is sending, and swapping the provider again
+ * should touch this file and nothing else.
  */
 
 type Mail = {
@@ -19,51 +22,40 @@ type Mail = {
   html: string;
 };
 
-const globalForMail = globalThis as unknown as {
-  mailer?: nodemailer.Transporter;
-};
+/**
+ * `magpie.akkki.tech` is the verified sending domain. The address only has to exist on a
+ * domain Resend has authenticated — the DKIM signature is what inboxes check, not whether
+ * a mailbox is listening at `hello@`. Overridable so a fresh clone on a different domain
+ * is a config change, not a code change.
+ */
+export const MAIL_FROM = process.env.MAIL_FROM || "Magpie <hello@magpie.akkki.tech>";
 
-function transporter() {
-  const user = process.env.GMAIL_USER;
-  const pass = process.env.GMAIL_APP_PASSWORD;
+const globalForMail = globalThis as unknown as { resend?: Resend };
 
-  if (!user || !pass) return null;
+function client() {
+  const key = process.env.RESEND_API_KEY;
+  if (!key) return null;
 
-  // Reused across hot reloads for the same reason as the Prisma client: a new
-  // transport per reload means a new pool of SMTP connections per save.
-  //
-  // Tried `pool: true` here to cut the ~3.5s a fresh Gmail connection costs on every send —
-  // it measurably hangs indefinitely under Bun instead (nodemailer's `SMTPPool` against a
-  // real Gmail server, confirmed by a script that never returned). Reverted rather than
-  // shipped: a send that reliably takes 3.5 seconds beats one that sometimes never
-  // completes. Left as a plain, unpooled connection until this is worth a real
-  // investigation or, better, a transactional email API that answers over HTTP instead of
-  // raw SMTP.
-  globalForMail.mailer ??= nodemailer.createTransport({
-    host: "smtp.gmail.com",
-    // 465 is implicit TLS — encrypted from the first byte, rather than 587's
-    // STARTTLS upgrade on a connection that begins in the clear.
-    port: 465,
-    secure: true,
-    auth: { user, pass },
-  });
-
-  return globalForMail.mailer;
+  // Reused across hot reloads for the same reason as the Prisma client. Cheaper than the
+  // SMTP transport it replaced — this holds a key and a `fetch`, not a live socket — but
+  // a new client per save is still pointless.
+  globalForMail.resend ??= new Resend(key);
+  return globalForMail.resend;
 }
 
 export async function sendMail({ to, subject, text, html }: Mail) {
-  const mailer = transporter();
+  const resend = client();
 
   /**
-   * No credentials configured: print the mail to the server log instead of
-   * throwing, so a fresh clone can still walk the whole magic-link flow by
-   * copying the URL out of the terminal. Loud on purpose — a silent no-op here
-   * would look exactly like a delivery problem. Never reachable in production:
-   * the app refuses to send at all without credentials there.
+   * No credentials configured: print the mail to the server log instead of throwing, so a
+   * fresh clone can still walk the whole magic-link flow by copying the URL out of the
+   * terminal. Loud on purpose — a silent no-op here would look exactly like a delivery
+   * problem. Never reachable in production: the app refuses to send at all without a key
+   * there.
    */
-  if (!mailer) {
+  if (!resend) {
     if (process.env.NODE_ENV === "production") {
-      throw new Error("GMAIL_USER / GMAIL_APP_PASSWORD are not set");
+      throw new Error("RESEND_API_KEY is not set");
     }
     console.warn(
       `\n── mail not configured, printing instead ──\nto:      ${to}\nsubject: ${subject}\n\n${text}\n──────────────────────────────────────────\n`,
@@ -71,11 +63,15 @@ export async function sendMail({ to, subject, text, html }: Mail) {
     return;
   }
 
-  await mailer.sendMail({
-    from: `Magpie <${process.env.GMAIL_USER}>`,
-    to,
-    subject,
-    text,
-    html,
-  });
+  const { error } = await resend.emails.send({ from: MAIL_FROM, to, subject, text, html });
+
+  /**
+   * Resend *returns* its errors as `{ data: null, error }` rather than throwing. Left
+   * unchecked that turns every failure into a successful-looking send — and `sendMagicLink`
+   * in `lib/auth.ts` deliberately awaits this and lets errors propagate so the sign-in form
+   * can say the link did not go out. Re-throwing is what keeps that promise true.
+   */
+  if (error) {
+    throw new Error(`Resend refused the send (${error.name}): ${error.message}`);
+  }
 }

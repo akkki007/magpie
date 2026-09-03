@@ -50,10 +50,11 @@ bun run dev
 
 Then sign up at `http://localhost:3000/sign-up`.
 
-Mail (magic links, email verification) needs a Gmail app password in `GMAIL_USER` /
-`GMAIL_APP_PASSWORD`. **Leave them unset and every email is printed to the server log
-instead of sent**, so the whole flow is walkable on a fresh clone. `bun run mail:check`
-authenticates against Gmail without sending anything.
+Mail (magic links, email verification) goes out over Resend and needs `RESEND_API_KEY`.
+**Leave it unset and every email is printed to the server log instead of sent**, so the
+whole flow is walkable on a fresh clone. Sending is from `magpie.akkki.tech`, the verified
+domain — override with `MAIL_FROM` if you have your own. `bun run mail:check` proves the
+key works and the domain is verified, without sending anything.
 
 ### Scripts
 
@@ -64,7 +65,7 @@ authenticates against Gmail without sending anything.
 | `bun run lint` | ESLint |
 | `bun run db:migrate` / `db:generate` / `db:studio` | Prisma |
 | `bun run auth:tables` | Prints the tables Better Auth expects, read from the installed library |
-| `bun run mail:check` | Verifies SMTP credentials without sending |
+| `bun run mail:check` | Verifies the Resend key and sending domain without sending |
 
 ## Stack
 

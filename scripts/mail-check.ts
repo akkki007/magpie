@@ -1,39 +1,51 @@
 /**
- * Proves the SMTP credentials in `.env` work, without sending anything.
+ * Proves the Resend setup in `.env` works, without sending anything.
  *
- * `verify()` opens the connection and completes the AUTH exchange, then hangs
- * up — so a wrong app password fails here in a second rather than silently at
- * the moment a real user asks for a sign-in link. Prints no secrets.
+ * Listing domains is the cheapest authenticated call there is, and it answers two
+ * questions at once: whether the API key is real, and whether the domain the app sends
+ * *from* is actually verified. That second half is the one that matters — a valid key
+ * sending from an unverified domain fails at the moment a real user asks for a sign-in
+ * link, which is exactly the failure this script exists to move earlier. Prints no
+ * secrets.
  *
  *   bun run mail:check
  */
 import "dotenv/config";
-import nodemailer from "nodemailer";
+import { Resend } from "resend";
 
-const user = process.env.GMAIL_USER;
-const pass = process.env.GMAIL_APP_PASSWORD;
+import { MAIL_FROM } from "../lib/mail";
 
-if (!user || !pass) {
-  console.error("GMAIL_USER / GMAIL_APP_PASSWORD are not set in .env");
+const key = process.env.RESEND_API_KEY;
+
+if (!key) {
+  console.error("RESEND_API_KEY is not set in .env");
   process.exit(1);
 }
 
-const transporter = nodemailer.createTransport({
-  host: "smtp.gmail.com",
-  port: 465,
-  secure: true,
-  auth: { user, pass },
-});
+/** `Magpie <hello@magpie.akkki.tech>` → `magpie.akkki.tech`. */
+const address = MAIL_FROM.match(/<(.+)>/)?.[1] ?? MAIL_FROM;
+const domain = address.split("@")[1];
 
-try {
-  await transporter.verify();
-  // The local part only — enough to confirm which account answered, without
-  // putting the full address in a terminal someone may screenshot.
-  console.log(`SMTP OK — authenticated as ${user.split("@")[0]}@…`);
-} catch (error) {
+const { data, error } = await new Resend(key).domains.list();
+
+if (error) {
+  console.error(`Resend rejected the key (${error.name}): ${error.message}`);
+  process.exit(1);
+}
+
+const match = data.data.find((entry) => entry.name === domain);
+
+if (!match) {
   console.error(
-    "SMTP failed:",
-    error instanceof Error ? error.message : String(error),
+    `Resend OK, but ${domain} is not on this account. Sending from ${address} will fail.\n` +
+      `Domains on the account: ${data.data.map((entry) => entry.name).join(", ") || "none"}`,
   );
   process.exit(1);
 }
+
+if (match.status !== "verified") {
+  console.error(`Resend OK, but ${domain} is "${match.status}", not verified.`);
+  process.exit(1);
+}
+
+console.log(`Resend OK — ${domain} verified, sending as ${address}`);
