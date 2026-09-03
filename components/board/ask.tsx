@@ -42,7 +42,7 @@ export function AskBoard({
   };
 
   return (
-    <div className="flex flex-col gap-2">
+    <div data-tour="ask" className="flex flex-col gap-2">
       <form
         onSubmit={(event) => {
           event.preventDefault();

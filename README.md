@@ -66,6 +66,8 @@ key works and the domain is verified, without sending anything.
 | `bun run db:migrate` / `db:generate` / `db:studio` | Prisma |
 | `bun run auth:tables` | Prints the tables Better Auth expects, read from the installed library |
 | `bun run mail:check` | Verifies the Resend key and sending domain without sending |
+| `bun run data:check` / `board:check` / `tour:check` | Database, board and demo-tour suites |
+| `bun run seed:database` / `seed:board` | The Customers table and the reporting board |
 
 ## Stack
 
@@ -118,3 +120,19 @@ proxy.ts       Next 16 middleware: coarse redirects only, never the security che
   human accepts. §1.4.
 - **Blue is interactive, violet is machine-authored.** Buttons and links are blue; formula
   pills, sparklines and the assistant are violet. `docs/design-system.md` §2.
+
+## Recording a demo
+
+There is a scripted walkthrough of the whole product in `lib/tour.ts` — ten steps across the
+model, the databases and a board, driven by driver.js over the real app.
+
+```
+bun run seed && bun run seed:database && bun run seed:board
+bun run dev
+open http://localhost:3000/models?tour=0
+```
+
+The step index lives in the URL, so a take can be restarted from any step by editing the
+address bar, and a reload mid-tour resumes where it was. `bun run tour:check` verifies every
+step still points at something that exists — worth running before the camera is on, because
+the failure this prevents is a tour dying halfway through a screen you are narrating.

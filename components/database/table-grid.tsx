@@ -60,7 +60,7 @@ export function TableGrid({ table }: { table: Table }) {
   const visible = matches.slice(0, limit);
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    <div data-tour="table-grid" className="flex min-h-0 flex-1 flex-col">
       {/* Search — one input, client-side. §1.4: no saved views, no filters, no sorts. */}
       <div className="shrink-0 px-4 py-3">
         <div className="flex items-center gap-2 rounded-control border border-line bg-surface px-2.5 py-1.5 focus-within:border-strong">

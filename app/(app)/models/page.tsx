@@ -54,7 +54,7 @@ export default async function ModelsPage() {
             </div>
           </div>
         ) : (
-          <ul className="min-h-0 flex-1 overflow-y-auto">
+          <ul data-tour="model-list" className="min-h-0 flex-1 overflow-y-auto">
             {models.map((model) => (
               <li key={model.slug} className="border-b border-line">
                 <Link

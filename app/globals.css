@@ -349,3 +349,70 @@
     }
   }
 }
+
+/* ─── Demo tour (driver.js) ──────────────────────────────────────────────
+   driver.js ships its own popover chrome; this replaces it with the design
+   system's, so a recording does not show a second visual language on top of
+   the product. Hairlines not shadows, near-black type, blue for the thing you
+   press — the same six rules every other surface follows. */
+.driver-popover.magpie-tour {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 8px 28px rgb(16 16 20 / 12%);
+  padding: 16px;
+  max-width: 340px;
+  font-family: var(--font-sans, inherit);
+}
+
+.driver-popover.magpie-tour .driver-popover-title {
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--text-primary);
+}
+
+.driver-popover.magpie-tour .driver-popover-description {
+  margin-top: 6px;
+  font-size: 13px;
+  line-height: 1.65;
+  color: var(--text-secondary);
+}
+
+.driver-popover.magpie-tour .driver-popover-progress-text {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-faint);
+}
+
+.driver-popover.magpie-tour .driver-popover-footer button {
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  padding: 5px 11px;
+  font-size: 12px;
+  font-weight: 500;
+  text-shadow: none;
+  color: var(--text-secondary);
+  background: var(--bg-surface);
+}
+
+.driver-popover.magpie-tour .driver-popover-footer button:hover {
+  background: var(--bg-hover);
+}
+
+/* The forward action is the one you press — the only coloured control here. */
+.driver-popover.magpie-tour .driver-popover-next-btn {
+  background: var(--color-blue-600);
+  border-color: var(--color-blue-600);
+  color: #fff;
+}
+
+.driver-popover.magpie-tour .driver-popover-next-btn:hover {
+  background: var(--color-blue-700);
+  border-color: var(--color-blue-700);
+  color: #fff;
+}
+
+.driver-popover.magpie-tour .driver-popover-arrow {
+  border-color: var(--bg-surface);
+}
