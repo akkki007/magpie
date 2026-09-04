@@ -1,17 +1,9 @@
 import Link from "next/link";
-import {
-  BookOpen,
-  Bot,
-  ChartColumn,
-  Database,
-  LayoutGrid,
-  LogOut,
-  Plus,
-  Scale,
-  Table2,
-} from "lucide-react";
+import { LogOut, Plus } from "lucide-react";
 
 import { signOut } from "@/app/(auth)/actions";
+import { MobileNav } from "@/components/app/mobile-nav";
+import { SECTIONS, type SectionLabel } from "@/components/app/nav-sections";
 import { Mark, Orb } from "@/components/ui/logo";
 import { cn } from "@/lib/cn";
 
@@ -24,33 +16,22 @@ import { cn } from "@/lib/cn";
  * coloured one: in this system elevation carries state and colour carries
  * information.
  */
-/**
- * `href` marks a section that actually exists. The rest are from the prototype and are inert
- * on purpose — a nav item that looks live and does nothing is worse than one that is visibly
- * not built yet, and adding a route here before the screen exists is how a dead link ships.
- */
-const SECTIONS = [
-  { icon: Table2, label: "Models", href: "/models" },
-  { icon: Scale, label: "Reconciliation", href: "/recon" },
-  { icon: ChartColumn, label: "Boards", href: "/boards" },
-  { icon: Database, label: "Data sources", href: "/databases" },
-  { icon: Bot, label: "Agents", href: "/agents" },
-  { icon: BookOpen, label: "Library" },
-  { icon: LayoutGrid, label: "Templates" },
-] as const satisfies readonly { icon: typeof Table2; label: string; href?: string }[];
-
 export function Rail({
   active = "Models",
   initials,
 }: {
-  active?: (typeof SECTIONS)[number]["label"];
+  active?: SectionLabel;
   initials: string;
 }) {
   return (
-    <nav
-      aria-label="Sections"
-      className="hidden w-[68px] shrink-0 flex-col items-center gap-1 py-4 sm:flex"
-    >
+    <>
+      {/* On phones the rail is replaced by a top bar + slide-in drawer. */}
+      <MobileNav active={active} initials={initials} />
+
+      <nav
+        aria-label="Sections"
+        className="hidden w-[68px] shrink-0 flex-col items-center gap-1 py-4 sm:flex"
+      >
       <Link href="/" aria-label="Magpie home" className="mb-4">
         <Mark className="h-6 w-6" />
       </Link>
@@ -120,6 +101,7 @@ export function Rail({
           {initials}
         </span>
       </div>
-    </nav>
+      </nav>
+    </>
   );
 }

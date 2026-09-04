@@ -36,7 +36,7 @@ export default async function AgentRunPage({ params }: PageProps<"/agents/[id]">
   const mode = MODES.find((m) => m.value === run.mode);
 
   return (
-    <div data-surface="app" className="flex h-dvh overflow-hidden bg-app">
+    <div data-surface="app" className="flex h-dvh flex-col overflow-hidden bg-app sm:flex-row">
       <Rail active="Agents" initials={initialsOf(session.user.name, session.user.email)} />
 
       <main className="my-2 flex min-w-0 flex-1 flex-col overflow-hidden rounded-card border border-line bg-surface sm:ml-0">

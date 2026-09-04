@@ -47,14 +47,14 @@ export default async function BoardPage({ params }: PageProps<"/boards/[slug]">)
   );
 
   return (
-    <div data-surface="app" className="flex h-dvh overflow-hidden bg-app">
+    <div data-surface="app" className="flex h-dvh flex-col overflow-hidden bg-app sm:flex-row">
       <Rail active="Boards" initials={initialsOf(session.user.name, session.user.email)} />
 
       <main className="my-2 flex min-w-0 flex-1 flex-col overflow-hidden rounded-card border border-line bg-surface sm:ml-0">
         <Topbar workspace="Boards" object={board.title} meta={`${board.tiles.length} tiles`} />
 
         <div className="min-h-0 flex-1 overflow-y-auto">
-          <div className="mx-auto max-w-[1100px] px-6 py-6">
+          <div className="mx-auto max-w-[1100px] px-4 py-5 sm:px-6 sm:py-6">
             <h1 className="flex items-center gap-3 text-[26px] leading-tight font-semibold text-ink">
               {board.emoji && <span aria-hidden>{board.emoji}</span>}
               {board.title}

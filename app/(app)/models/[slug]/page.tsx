@@ -44,7 +44,7 @@ export default async function ModelPage({ params }: PageProps<"/models/[slug]">)
   if (!model) notFound();
 
   return (
-    <div data-surface="app" className="flex h-dvh overflow-hidden bg-app">
+    <div data-surface="app" className="flex h-dvh flex-col overflow-hidden bg-app sm:flex-row">
       <Rail active="Models" initials={initialsOf(session.user.name, session.user.email)} />
 
       {/* The canvas: a white document floating on the desk, not a full-bleed page.

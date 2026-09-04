@@ -17,20 +17,26 @@ const DRIVERS = [
 export function DashboardSurface() {
   return (
     <div className="flex h-full flex-col bg-surface">
-      <div className="flex h-[46px] shrink-0 items-center gap-2 border-b border-line px-5">
+      <div className="flex h-[46px] shrink-0 items-center gap-2 border-b border-line px-4 md:px-5">
         <span
           aria-hidden
-          className="grid h-[16px] w-[16px] place-items-center rounded-[3px] bg-chip-amber text-[9px] font-bold text-ink"
+          className="grid h-[16px] w-[16px] shrink-0 place-items-center rounded-[3px] bg-chip-amber text-[9px] font-bold text-ink"
         >
           A
         </span>
-        <span className="text-[12.5px] text-ink-muted">Annual Operating Plan</span>
-        <span className="text-ink-faint">/</span>
-        <span className="text-[12.5px] font-medium text-ink">Operating Profit Drivers</span>
-        <span className="ml-auto text-[12.5px] text-ink-muted">Share</span>
+        {/* The parent crumb is context, not the subject — it's the first thing to fold away
+            when the bar runs out of room on a phone. */}
+        <span className="hidden shrink-0 text-[12.5px] text-ink-muted sm:inline">
+          Annual Operating Plan
+        </span>
+        <span className="hidden shrink-0 text-ink-faint sm:inline">/</span>
+        <span className="min-w-0 truncate text-[12.5px] font-medium text-ink">
+          Operating Profit Drivers
+        </span>
+        <span className="ml-auto shrink-0 text-[12.5px] text-ink-muted">Share</span>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-hidden px-5 py-5 md:px-7">
+      <div className="min-h-0 flex-1 overflow-hidden px-4 py-4 sm:px-5 sm:py-5 md:px-7">
         {/*
           Product surfaces stay on Inter Tight, not the Hinato heading face:
           Hinato has no tabular figures, and this mock has to read as the real
