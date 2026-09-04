@@ -94,13 +94,29 @@ export const GRID_GEOMETRY = {
   /** Comparing puts a second line in every cell, so the row has to grow to hold it. */
   rowHeight: (compact: boolean, comparing = false) =>
     comparing ? (compact ? 38 : 44) : compact ? 26 : 30,
-  nameWidth: 292,
+  /**
+   * The sticky name column, narrowed on a phone.
+   *
+   * 292 is right on a desktop and absurd on a 390px screen: it is three quarters of the
+   * viewport spent on labels, leaving room for most of one month. At 168 a name still reads
+   * — the row is a name and a chip, not a paragraph — and two periods fit beside it, which is
+   * the difference between reading a trend and reading a number.
+   *
+   * A function rather than a media query because the number is arithmetic before it is
+   * layout: the virtualiser derives the first visible column from it, and so does
+   * `Workbench`'s scroll-into-view. A CSS-only version would leave both computing against
+   * 292 while the browser rendered 168, and the symptom would be arrow-keying to a cell that
+   * scrolls to the wrong place — which is a much harder bug to find than a wide column.
+   *
+   * Breakpoint in px against the *scroll container*, not `sm:`, for the same reason.
+   */
+  nameWidth: (viewportWidth = Number.POSITIVE_INFINITY) => (viewportWidth < 480 ? 168 : 292),
   trendWidth: 116,
   formulaWidth: 246,
   periodWidth: 108,
 } as const;
 
-const { nameWidth: NAME_WIDTH, trendWidth: TREND_WIDTH, formulaWidth: FORMULA_WIDTH, periodWidth: PERIOD_WIDTH } =
+const { trendWidth: TREND_WIDTH, formulaWidth: FORMULA_WIDTH, periodWidth: PERIOD_WIDTH } =
   GRID_GEOMETRY;
 
 export function Grid({
@@ -257,8 +273,9 @@ export function Grid({
   const padTop = firstRow * rowHeight;
   const padBottom = (rows.length - lastRow) * rowHeight;
 
+  const nameWidth = GRID_GEOMETRY.nameWidth(port.width);
   const leadWidth =
-    NAME_WIDTH + (view.trend ? TREND_WIDTH : 0) + (view.formula ? FORMULA_WIDTH : 0);
+    nameWidth + (view.trend ? TREND_WIDTH : 0) + (view.formula ? FORMULA_WIDTH : 0);
   const firstColumn = Math.max(
     0,
     Math.floor((port.left - leadWidth) / PERIOD_WIDTH) - OVERSCAN_COLUMNS,
@@ -278,7 +295,7 @@ export function Grid({
   return (
     <table className="border-separate border-spacing-0 text-[12px] tabular-nums">
       <colgroup>
-        <col style={{ width: NAME_WIDTH }} />
+        <col style={{ width: nameWidth }} />
         {view.trend && <col style={{ width: TREND_WIDTH }} />}
         {view.formula && <col style={{ width: FORMULA_WIDTH }} />}
         {padLeft > 0 && <col style={{ width: padLeft }} />}
@@ -481,7 +498,7 @@ export function Grid({
                   )}
 
                   {!isMember && (
-                    <span className="ml-auto flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity duration-150 group-focus-within:opacity-100 group-hover:opacity-100">
+                    <span className="ml-auto flex shrink-0 items-center gap-0.5 transition-opacity duration-150 group-focus-within:opacity-100 sm:opacity-0 sm:group-hover:opacity-100">
                       {variable.formula && (
                         <RowAction
                           label={isTraceTarget ? "Clear trace" : "Trace precedents"}

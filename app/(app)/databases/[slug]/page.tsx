@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { notFound, redirect } from "next/navigation";
 
-import { Rail } from "@/components/app/rail";
+import { AppShell } from "@/components/app/shell";
 import { Topbar } from "@/components/app/topbar";
 import { TableGrid } from "@/components/database/table-grid";
 import { readTable } from "@/lib/data/persist";
@@ -36,17 +36,17 @@ export default async function DatabaseTablePage({ params }: PageProps<"/database
   if (!table) notFound();
 
   return (
-    <div data-surface="app" className="flex h-dvh overflow-hidden bg-app">
-      <Rail active="Data sources" initials={initialsOf(session.user.name, session.user.email)} />
-
-      <main className="my-2 flex min-w-0 flex-1 flex-col overflow-hidden rounded-card border border-line bg-surface sm:ml-0">
-        <Topbar
-          workspace="Database"
-          object={table.name}
-          meta={`${table.rows.length.toLocaleString("en-US")} rows`}
-        />
-        <TableGrid table={table} />
-      </main>
-    </div>
+    <AppShell
+      active="Data sources"
+      initials={initialsOf(session.user.name, session.user.email)}
+      email={session.user.email}
+    >
+      <Topbar
+        workspace="Database"
+        object={table.name}
+        meta={`${table.rows.length.toLocaleString("en-US")} rows`}
+      />
+      <TableGrid table={table} />
+    </AppShell>
   );
 }

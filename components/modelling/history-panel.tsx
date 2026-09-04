@@ -123,11 +123,16 @@ export function HistoryPanel({ slug }: { slug: string }) {
             onClick={() => setOpen(false)}
             className="fixed inset-0 z-40 cursor-default"
           />
+          {/* Full-bleed on a phone, a side panel from `sm` up: a fixed 3xx px panel is not a
+              narrow panel on a 360px screen — it is the whole screen with a sliver of canvas
+              showing, or an overflow. Below `sm` it takes the width it will actually take and
+              states it as `inset-x-0`, so there is no number here to disagree with the
+              viewport. */}
           <aside
             aria-label="Version history"
             className={cn(
-              "fixed top-0 right-0 z-50 flex h-dvh w-[360px] flex-col",
-              "border-l border-line bg-surface",
+              "fixed inset-x-0 top-0 z-50 flex h-dvh flex-col sm:right-0 sm:left-auto sm:w-[360px]",
+              "border-line bg-surface sm:border-l",
             )}
           >
             <header className="flex h-[52px] shrink-0 items-center gap-2 border-b border-line px-4">
@@ -190,7 +195,7 @@ export function HistoryPanel({ slug }: { slug: string }) {
                           type="button"
                           disabled={busy}
                           onClick={() => restore(version)}
-                          className="flex shrink-0 items-center gap-1 rounded-button px-1.5 py-0.5 text-[11px] text-ink-muted opacity-0 transition-all duration-150 group-hover:opacity-100 hover:bg-canvas hover:text-ink focus-visible:opacity-100"
+                          className="flex shrink-0 items-center gap-1 rounded-button px-1.5 py-0.5 text-[11px] text-ink-muted transition-all duration-150 hover:bg-canvas hover:text-ink focus-visible:opacity-100 sm:opacity-0 sm:group-hover:opacity-100"
                         >
                           <RotateCcw className="h-3 w-3" strokeWidth={1.75} />
                           Restore

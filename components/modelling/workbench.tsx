@@ -339,9 +339,12 @@ export function Workbench({
     const index = rows.findIndex((row) => row.key === selection.rowKey);
     if (index < 0) return;
 
-    const { nameWidth, trendWidth, formulaWidth, periodWidth } = GRID_GEOMETRY;
+    const { trendWidth, formulaWidth, periodWidth } = GRID_GEOMETRY;
     const headerHeight = GRID_GEOMETRY.headerHeight(compare !== null);
     const height = GRID_GEOMETRY.rowHeight(view.compact, compare !== null);
+    // Measured off the same element the grid measures, so the two cannot disagree about how
+    // wide the sticky column currently is — see `GRID_GEOMETRY.nameWidth`.
+    const nameWidth = GRID_GEOMETRY.nameWidth(element.clientWidth);
     const lead = nameWidth + (view.trend ? trendWidth : 0) + (view.formula ? formulaWidth : 0);
 
     const top = headerHeight + index * height;

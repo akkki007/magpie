@@ -166,9 +166,14 @@ export function AgentPanel({
       </button>
 
       {open && (
+        /* Full-bleed on a phone, a side panel from `sm` up: a fixed 3xx px panel is not a
+            narrow panel on a 360px screen — it is the whole screen with a sliver of canvas
+            showing, or an overflow. Below `sm` it takes the width it will actually take and
+            states it as `inset-x-0`, so there is no number here to disagree with the
+            viewport. */
         <aside
           aria-label="Ask the agent"
-          className="fixed top-0 right-0 z-50 flex h-dvh w-[380px] flex-col border-l border-line bg-surface"
+          className="fixed inset-x-0 top-0 z-50 flex h-dvh flex-col border-line bg-surface sm:right-0 sm:left-auto sm:w-[380px] sm:border-l"
         >
           <header className="flex h-[52px] shrink-0 items-center gap-1 border-b border-line px-3">
             <Sparkles className="h-4 w-4 shrink-0 text-violet-500" strokeWidth={1.75} aria-hidden />
@@ -248,7 +253,7 @@ export function AgentPanel({
                             removeChat(chat);
                           }}
                           aria-label={`Delete "${chat.title}"`}
-                          className="grid h-5 w-5 shrink-0 place-items-center rounded-control text-ink-faint opacity-0 transition-all duration-150 group-hover:opacity-100 hover:bg-canvas hover:text-neg-fg"
+                          className="grid h-5 w-5 shrink-0 place-items-center rounded-control text-ink-faint transition-all duration-150 hover:bg-canvas hover:text-neg-fg sm:opacity-0 sm:group-hover:opacity-100"
                         >
                           <Trash2 className="h-3 w-3" strokeWidth={1.75} />
                         </span>

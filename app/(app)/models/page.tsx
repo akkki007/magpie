@@ -3,8 +3,10 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { Table2 } from "lucide-react";
 
-import { Rail } from "@/components/app/rail";
+import { SeedButton } from "@/components/app/seed-button";
+import { AppShell } from "@/components/app/shell";
 import { Topbar } from "@/components/app/topbar";
+import { seedModel } from "@/app/(app)/seed/actions";
 import { db } from "@/lib/db";
 import { getSession } from "@/lib/session";
 import { initialsOf } from "@/lib/initials";
@@ -35,54 +37,61 @@ export default async function ModelsPage() {
   });
 
   return (
-    <div data-surface="app" className="flex h-dvh overflow-hidden bg-app">
-      <Rail active="Models" initials={initialsOf(session.user.name, session.user.email)} />
+    <AppShell
+      active="Models"
+      initials={initialsOf(session.user.name, session.user.email)}
+      email={session.user.email}
+    >
+      <Topbar workspace="Models" object="All models" meta={`${models.length} model(s)`} />
 
-      <main className="my-2 flex min-w-0 flex-1 flex-col overflow-hidden rounded-card border border-line bg-surface sm:ml-0">
-        <Topbar workspace="Models" object="All models" meta={`${models.length} model(s)`} />
-
-        {models.length === 0 ? (
-          <div className="flex flex-1 items-center justify-center p-8">
-            <div className="max-w-md text-center">
-              <p className="text-[14px] font-medium text-ink">No models yet</p>
-              <p className="mt-1 text-[13px] leading-[1.6] text-ink-muted">
-                The database is empty. Seed the Revenue Model with:
-              </p>
-              <pre className="mt-3 rounded-control border border-line bg-subtle px-3 py-2 text-left font-mono text-[12px] text-ink-2">
-                bun run seed
-              </pre>
+      {models.length === 0 ? (
+        <div className="flex flex-1 items-center justify-center p-6 sm:p-8">
+          <div className="max-w-md text-center">
+            <p className="text-[14px] font-medium text-ink">No models yet</p>
+            <p className="mt-1 text-[13px] leading-[1.6] text-ink-muted">
+              The database is empty. Seed the Revenue Model 2026 — 24 months, a formula tree
+              and three scenarios — and the whole app has something to show.
+            </p>
+            <div className="mt-4 flex justify-center">
+              <SeedButton action={seedModel} label="Seed the demo model" />
             </div>
+            {/* The command stays, below the button rather than instead of it: whoever is
+                holding the repo gets the verification harness the script wraps around this,
+                which the button deliberately skips. */}
+            <p className="mt-4 text-[12px] text-ink-faint">
+              Or, with the repo: <code className="text-ink-muted">bun run seed</code>
+            </p>
           </div>
-        ) : (
-          <ul data-tour="model-list" className="min-h-0 flex-1 overflow-y-auto">
-            {models.map((model) => (
-              <li key={model.slug} className="border-b border-line">
-                <Link
-                  href={`/models/${model.slug}`}
-                  className="flex items-center gap-3 px-4 py-3 hover:bg-hover"
-                >
-                  <span className="grid h-8 w-8 shrink-0 place-items-center rounded-control bg-chip-sky">
-                    <Table2 className="h-4 w-4 text-ink" strokeWidth={1.75} aria-hidden />
+        </div>
+      ) : (
+        <ul data-tour="model-list" className="min-h-0 flex-1 overflow-y-auto">
+          {models.map((model) => (
+            <li key={model.slug} className="border-b border-line">
+              <Link
+                href={`/models/${model.slug}`}
+                className="flex items-center gap-3 px-4 py-3 hover:bg-hover"
+              >
+                <span className="grid h-8 w-8 shrink-0 place-items-center rounded-control bg-chip-sky">
+                  <Table2 className="h-4 w-4 text-ink" strokeWidth={1.75} aria-hidden />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-[14px] font-medium text-ink">
+                    {model.name}
                   </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-[14px] font-medium text-ink">
-                      {model.name}
-                    </span>
-                    <span className="block text-[12px] text-ink-muted">
-                      {model._count.variables} variables · {model._count.scenarios} scenarios ·{" "}
-                      {model.horizonStart.toISOString().slice(0, 7)} to{" "}
-                      {model.horizonEnd.toISOString().slice(0, 7)}
-                    </span>
+                  <span className="block text-[12px] text-ink-muted">
+                    {model._count.variables} variables · {model._count.scenarios} scenarios ·{" "}
+                    {model.horizonStart.toISOString().slice(0, 7)} to{" "}
+                    {model.horizonEnd.toISOString().slice(0, 7)}
                   </span>
-                  <span className="shrink-0 text-[12px] text-ink-faint">
-                    {model.updatedAt.toISOString().slice(0, 10)}
-                  </span>
-                </Link>
-              </li>
-            ))}
-          </ul>
-        )}
-      </main>
-    </div>
+                </span>
+                <span className="shrink-0 text-[12px] text-ink-faint">
+                  {model.updatedAt.toISOString().slice(0, 10)}
+                </span>
+              </Link>
+            </li>
+          ))}
+        </ul>
+      )}
+    </AppShell>
   );
 }

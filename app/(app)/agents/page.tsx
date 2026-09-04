@@ -3,7 +3,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { Bot } from "lucide-react";
 
-import { Rail } from "@/components/app/rail";
+import { AppShell } from "@/components/app/shell";
 import { Topbar } from "@/components/app/topbar";
 import { SpawnPanel } from "@/components/agents/spawn-panel";
 import { db } from "@/lib/db";
@@ -48,74 +48,74 @@ export default async function AgentsPage() {
   });
 
   return (
-    <div data-surface="app" className="flex h-dvh overflow-hidden bg-app">
-      <Rail active="Agents" initials={initialsOf(session.user.name, session.user.email)} />
+    <AppShell
+      active="Agents"
+      initials={initialsOf(session.user.name, session.user.email)}
+      email={session.user.email}
+    >
+      <Topbar workspace="Agents" object="Finance ops" meta={`${runs.length} run(s)`} />
 
-      <main className="my-2 flex min-w-0 flex-1 flex-col overflow-hidden rounded-card border border-line bg-surface sm:ml-0">
-        <Topbar workspace="Agents" object="Finance ops" meta={`${runs.length} run(s)`} />
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className="mx-auto max-w-[820px] px-4 py-5 sm:px-6 sm:py-6">
+          <h1 className="text-[22px] leading-tight font-semibold text-ink">Spawn an agent</h1>
+          <p className="mt-1.5 text-[13px] leading-[1.65] text-ink-muted">
+            It plans, delegates to specialists, reads the model and the tables, and comes back
+            with a finding. Anything it wants to change stops for your approval first.
+          </p>
 
-        <div className="min-h-0 flex-1 overflow-y-auto">
-          <div className="mx-auto max-w-[820px] px-6 py-6">
-            <h1 className="text-[22px] leading-tight font-semibold text-ink">Spawn an agent</h1>
-            <p className="mt-1.5 text-[13px] leading-[1.65] text-ink-muted">
-              It plans, delegates to specialists, reads the model and the tables, and comes back
-              with a finding. Anything it wants to change stops for your approval first.
-            </p>
-
-            <div className="mt-4">
-              <SpawnPanel
-                suggestions={SUGGESTIONS}
-                modelName={process.env.OPENAI_MODEL ?? "gpt-5.6"}
-                runsToday={runsToday}
-              />
-            </div>
-
-            <h2 className="mt-8 mb-2 text-[11px] font-semibold tracking-[0.06em] text-ink-faint uppercase">
-              Runs
-            </h2>
-
-            {runs.length === 0 ? (
-              <p className="text-[13px] text-ink-muted">No runs yet.</p>
-            ) : (
-              <ul className="overflow-hidden rounded-card border border-line">
-                {runs.map((run) => {
-                  const todos = Array.isArray(run.plan) ? (run.plan as { status?: string }[]) : [];
-                  const done = todos.filter((t) => t.status === "completed").length;
-
-                  return (
-                    <li key={run.id} className="border-b border-line last:border-b-0">
-                      <Link href={`/agents/${run.id}`} className="flex items-start gap-3 px-4 py-3 hover:bg-hover">
-                        <span className="mt-[2px] grid h-7 w-7 shrink-0 place-items-center rounded-control bg-violet-100">
-                          <Bot className="h-3.5 w-3.5 text-violet-500" strokeWidth={1.75} aria-hidden />
-                        </span>
-                        <span className="min-w-0 flex-1">
-                          <span className="block truncate text-[13px] font-medium text-ink">
-                            {run.planTitle ?? run.task}
-                          </span>
-                          <span className="mt-0.5 block text-[11px] text-ink-faint">
-                            {run.createdAt.toISOString().slice(0, 16).replace("T", " ")}
-                            {` · ${run.mode}`}
-                            {todos.length > 0 && ` · ${done}/${todos.length} tasks`}
-                          </span>
-                        </span>
-                        <span
-                          className={cn(
-                            "shrink-0 rounded-chip px-1.5 py-[3px] text-[10px] font-semibold",
-                            STATUS_TONE[run.status],
-                          )}
-                        >
-                          {STATUS_LABEL[run.status]}
-                        </span>
-                      </Link>
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
+          <div className="mt-4">
+            <SpawnPanel
+              suggestions={SUGGESTIONS}
+              modelName={process.env.OPENAI_MODEL ?? "gpt-5.6"}
+              runsToday={runsToday}
+            />
           </div>
+
+          <h2 className="mt-8 mb-2 text-[11px] font-semibold tracking-[0.06em] text-ink-faint uppercase">
+            Runs
+          </h2>
+
+          {runs.length === 0 ? (
+            <p className="text-[13px] text-ink-muted">No runs yet.</p>
+          ) : (
+            <ul className="overflow-hidden rounded-card border border-line">
+              {runs.map((run) => {
+                const todos = Array.isArray(run.plan) ? (run.plan as { status?: string }[]) : [];
+                const done = todos.filter((t) => t.status === "completed").length;
+
+                return (
+                  <li key={run.id} className="border-b border-line last:border-b-0">
+                    <Link href={`/agents/${run.id}`} className="flex items-start gap-3 px-4 py-3 hover:bg-hover">
+                      <span className="mt-[2px] grid h-7 w-7 shrink-0 place-items-center rounded-control bg-violet-100">
+                        <Bot className="h-3.5 w-3.5 text-violet-500" strokeWidth={1.75} aria-hidden />
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-[13px] font-medium text-ink">
+                          {run.planTitle ?? run.task}
+                        </span>
+                        <span className="mt-0.5 block text-[11px] text-ink-faint">
+                          {run.createdAt.toISOString().slice(0, 16).replace("T", " ")}
+                          {` · ${run.mode}`}
+                          {todos.length > 0 && ` · ${done}/${todos.length} tasks`}
+                        </span>
+                      </span>
+                      <span
+                        className={cn(
+                          "shrink-0 rounded-chip px-1.5 py-[3px] text-[10px] font-semibold",
+                          STATUS_TONE[run.status],
+                        )}
+                      >
+                        {STATUS_LABEL[run.status]}
+                      </span>
+                    </Link>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
         </div>
-      </main>
-    </div>
+      </div>
+    </AppShell>
   );
 }
 

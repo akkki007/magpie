@@ -132,7 +132,7 @@ function Card({
         onClick={onRemove}
         disabled={pending}
         aria-label="Remove tile"
-        className="absolute top-3 right-3 grid h-7 w-7 place-items-center rounded-control text-ink-faint opacity-0 transition-opacity group-hover:opacity-100 hover:bg-hover hover:text-ink focus-visible:opacity-100"
+        className="absolute top-3 right-3 grid h-7 w-7 place-items-center rounded-control text-ink-faint transition-opacity hover:bg-hover hover:text-ink focus-visible:opacity-100 sm:opacity-0 sm:group-hover:opacity-100"
       >
         <Trash2 className="h-3.5 w-3.5" strokeWidth={1.75} />
       </button>

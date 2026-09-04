@@ -1,17 +1,8 @@
 import Link from "next/link";
-import {
-  BookOpen,
-  Bot,
-  ChartColumn,
-  Database,
-  LayoutGrid,
-  LogOut,
-  Plus,
-  Scale,
-  Table2,
-} from "lucide-react";
+import { LogOut, Plus } from "lucide-react";
 
 import { signOut } from "@/app/(auth)/actions";
+import { SECTIONS, type SectionLabel } from "@/components/app/nav";
 import { Mark, Orb } from "@/components/ui/logo";
 import { cn } from "@/lib/cn";
 
@@ -24,26 +15,11 @@ import { cn } from "@/lib/cn";
  * coloured one: in this system elevation carries state and colour carries
  * information.
  */
-/**
- * `href` marks a section that actually exists. The rest are from the prototype and are inert
- * on purpose — a nav item that looks live and does nothing is worse than one that is visibly
- * not built yet, and adding a route here before the screen exists is how a dead link ships.
- */
-const SECTIONS = [
-  { icon: Table2, label: "Models", href: "/models" },
-  { icon: Scale, label: "Reconciliation", href: "/recon" },
-  { icon: ChartColumn, label: "Boards", href: "/boards" },
-  { icon: Database, label: "Data sources", href: "/databases" },
-  { icon: Bot, label: "Agents", href: "/agents" },
-  { icon: BookOpen, label: "Library" },
-  { icon: LayoutGrid, label: "Templates" },
-] as const satisfies readonly { icon: typeof Table2; label: string; href?: string }[];
-
 export function Rail({
   active = "Models",
   initials,
 }: {
-  active?: (typeof SECTIONS)[number]["label"];
+  active?: SectionLabel;
   initials: string;
 }) {
   return (

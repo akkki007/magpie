@@ -73,3 +73,6 @@ __pycache__/
 /.agents/skills/supabase-postgres-best-practices/
 /.claude/skills/supabase
 /.claude/skills/supabase-postgres-best-practices
+
+# Pitch script. Working notes, same as how-to-pitch.md.
+/pitch-script.md

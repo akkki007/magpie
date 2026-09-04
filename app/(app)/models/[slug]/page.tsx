@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { notFound, redirect } from "next/navigation";
 
-import { Rail } from "@/components/app/rail";
+import { AppShell } from "@/components/app/shell";
 import { Workbench } from "@/components/modelling/workbench";
 import { db } from "@/lib/db";
 import { readModel } from "@/lib/model/persist";
@@ -44,14 +44,12 @@ export default async function ModelPage({ params }: PageProps<"/models/[slug]">)
   if (!model) notFound();
 
   return (
-    <div data-surface="app" className="flex h-dvh overflow-hidden bg-app">
-      <Rail active="Models" initials={initialsOf(session.user.name, session.user.email)} />
-
-      {/* The canvas: a white document floating on the desk, not a full-bleed page.
-          Hairline border, no shadow. */}
-      <main className="my-2 flex min-w-0 flex-1 flex-col overflow-hidden rounded-card border border-line bg-surface sm:ml-0">
-        <Workbench initialModel={model} slug={slug} modelName={model.name} />
-      </main>
-    </div>
+    <AppShell
+      active="Models"
+      initials={initialsOf(session.user.name, session.user.email)}
+      email={session.user.email}
+    >
+      <Workbench initialModel={model} slug={slug} modelName={model.name} />
+    </AppShell>
   );
 }

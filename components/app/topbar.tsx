@@ -35,11 +35,19 @@ export function Topbar({
   comments?: React.ReactNode;
 }) {
   return (
-    <header className="flex h-[52px] shrink-0 items-center gap-2 border-b border-line px-4">
+    <header className="flex h-[52px] shrink-0 items-center gap-2 border-b border-line px-3 sm:px-4">
       <nav aria-label="Breadcrumb" className="flex min-w-0 items-center gap-2">
-        <Table2 className="h-4 w-4 shrink-0 text-ink-muted" strokeWidth={1.75} aria-hidden />
-        <span className="truncate text-[14px] text-ink-2">{workspace}</span>
-        <span className="text-ink-faint">/</span>
+        <Table2
+          className="hidden h-4 w-4 shrink-0 text-ink-muted sm:block"
+          strokeWidth={1.75}
+          aria-hidden
+        />
+        {/* The parent crumb and its separator go on a phone. A breadcrumb's job is to say
+            where you are, and the section is already named by the highlighted tab in the
+            bottom bar — so on the one screen with no room for both, the ancestor is the
+            redundant half and the object's own name is what has to survive. */}
+        <span className="hidden truncate text-[14px] text-ink-2 sm:block">{workspace}</span>
+        <span className="hidden text-ink-faint sm:block">/</span>
         <span
           aria-hidden
           className="grid h-5 w-5 shrink-0 place-items-center rounded-chip bg-chip-sky text-[10px] font-semibold text-ink"
@@ -51,14 +59,21 @@ export function Topbar({
         </span>
       </nav>
 
-      <div className="ml-auto flex items-center gap-1">
+      {/*
+        `shrink-0` on the action cluster, so a long model name truncates instead of squeezing
+        the buttons — a half-width Share button is worse than a shortened title.
+      */}
+      <div className="ml-auto flex shrink-0 items-center gap-1">
         {meta && <span className="mr-1 hidden text-[12px] text-ink-faint md:block">{meta}</span>}
         <button
           type="button"
-          className="rounded-button px-2.5 py-1.5 text-[13px] font-medium text-ink-2 transition-colors duration-150 hover:bg-hover"
+          className="hidden rounded-button px-2.5 py-1.5 text-[13px] font-medium text-ink-2 transition-colors duration-150 hover:bg-hover sm:block"
         >
           Share
         </button>
+        {/* The three panel triggers stay at every width. They are the only things in this
+            cluster that do anything, and the agent is the reason to open the app on a phone
+            at all — you are not editing a formula on a train, you are asking about one. */}
         {agent}
         {history}
         {comments}
@@ -75,7 +90,9 @@ export function Topbar({
             aria-label={label}
             title={label}
             className={cn(
-              "grid h-8 w-8 place-items-center rounded-control",
+              // Hidden on a phone: all three are inert, and chrome that does nothing is the
+              // first thing to cut when the row has to fit in 360px.
+              "hidden h-8 w-8 place-items-center rounded-control sm:grid",
               "text-ink-muted transition-colors duration-150 hover:bg-hover hover:text-ink",
             )}
           >

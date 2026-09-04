@@ -91,9 +91,14 @@ export function CommentsPanel({ slug, model }: { slug: string; model: Model }) {
       </button>
 
       {open && (
+        /* Full-bleed on a phone, a side panel from `sm` up: a fixed 3xx px panel is not a
+            narrow panel on a 360px screen — it is the whole screen with a sliver of canvas
+            showing, or an overflow. Below `sm` it takes the width it will actually take and
+            states it as `inset-x-0`, so there is no number here to disagree with the
+            viewport. */
         <aside
           aria-label="Comments"
-          className="fixed top-0 right-0 z-50 flex h-dvh w-[360px] flex-col border-l border-line bg-surface"
+          className="fixed inset-x-0 top-0 z-50 flex h-dvh flex-col border-line bg-surface sm:right-0 sm:left-auto sm:w-[360px] sm:border-l"
         >
           <header className="flex h-[52px] shrink-0 items-center gap-2 border-b border-line px-4">
             <span className="text-[14px] font-medium text-ink">Comments</span>

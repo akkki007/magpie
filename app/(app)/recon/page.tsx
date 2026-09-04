@@ -3,7 +3,7 @@ import type { Metadata } from "next";
 import { connection } from "next/server";
 import { redirect } from "next/navigation";
 
-import { Rail } from "@/components/app/rail";
+import { AppShell } from "@/components/app/shell";
 import { Topbar } from "@/components/app/topbar";
 import { ReviewQueue } from "@/components/recon/review-queue";
 import { readRunReport } from "@/lib/recon/report";
@@ -24,16 +24,16 @@ export default async function ReconPage() {
   if (!session) redirect("/sign-in?next=/recon");
 
   return (
-    <div data-surface="app" className="flex h-dvh overflow-hidden bg-app">
-      <Rail active="Reconciliation" initials={initialsOf(session.user.name, session.user.email)} />
-
-      <main className="my-2 flex min-w-0 flex-1 flex-col overflow-hidden rounded-card border border-line bg-surface sm:ml-0">
-        <Topbar workspace="Reconciliation" object="June–August 2026" meta="Deterministic run" />
-        <Suspense fallback={<Loading />}>
-          <Report />
-        </Suspense>
-      </main>
-    </div>
+    <AppShell
+      active="Reconciliation"
+      initials={initialsOf(session.user.name, session.user.email)}
+      email={session.user.email}
+    >
+      <Topbar workspace="Reconciliation" object="June–August 2026" meta="Deterministic run" />
+      <Suspense fallback={<Loading />}>
+        <Report />
+      </Suspense>
+    </AppShell>
   );
 }
 
