@@ -17,10 +17,27 @@ import type { PendingAction } from "@/lib/agents/run";
  * convention the agent is trusting: there is no code path from this state to a write that
  * does not go through one of these two buttons.
  *
- * So the card shows the arguments verbatim. An approval screen that says "the agent wants to
- * make a change" is a rubber stamp; the point is to show exactly what will happen, which for
- * a proposal means the label and the commands, and for a tile means the spec.
+ * **What is being asked for is drawn on the canvas, not dumped here.** An approval screen
+ * that says "the agent wants to make a change" is a rubber stamp — so the thing itself is
+ * rendered beside this: the table as a grid with its real columns, a proposal as the
+ * sentences it amounts to, each with the raw arguments one disclosure away. This side names
+ * the tool and the decision. Showing the same JSON twice made the pane that mattered look
+ * like the redundant one.
  */
+/** What each write tool is asking to do, in the words a person would use. */
+const ASKED: Record<string, string> = {
+  createTable: "Create a table",
+  proposeModelChanges: "Stage changes to the plan",
+  addBoardTile: "Add a tile to a board",
+};
+
+/** The one argument that identifies *which* thing — the rest is on the card. */
+function subject(action: PendingAction): string {
+  const args = action.args as { name?: unknown; label?: unknown; boardSlug?: unknown };
+  const named = args.name ?? args.label ?? args.boardSlug;
+  return typeof named === "string" ? named : "";
+}
+
 export function Approval({ runId, pending }: { runId: string; pending: PendingAction[] }) {
   const [pendingTransition, start] = useTransition();
   const [note, setNote] = useState("");
@@ -49,19 +66,22 @@ export function Approval({ runId, pending }: { runId: string; pending: PendingAc
         until you decide.
       </p>
 
-      <ul className="mt-3 flex flex-col gap-2">
+      <ul className="mt-3 flex flex-col gap-1.5">
         {pending.map((action, index) => (
-          <li key={`${action.name}-${index}`} className="rounded-control border border-line bg-surface p-3">
-            <p className="font-mono text-[12px] font-medium text-ink">{action.name}</p>
-            {action.description && (
-              <p className="mt-1 text-[12px] leading-[1.6] text-ink-muted">{action.description}</p>
-            )}
-            <pre className="mt-2 max-h-56 overflow-auto rounded-button bg-subtle px-2.5 py-2 font-mono text-[11px] leading-[1.6] text-ink-2">
-              {JSON.stringify(action.args, null, 2)}
-            </pre>
+          <li
+            key={`${action.name}-${index}`}
+            className="flex items-baseline gap-2 rounded-control border border-line bg-surface px-3 py-2"
+          >
+            <span className="text-[12px] text-ink">{ASKED[action.name] ?? action.name}</span>
+            <span className="truncate font-mono text-[11px] text-ink-faint">{subject(action)}</span>
           </li>
         ))}
       </ul>
+
+      <p className="mt-2 text-[11px] text-ink-muted">
+        {pending.length === 1 ? "It is drawn on the left" : "They are drawn on the left"} — check it
+        there before you decide.
+      </p>
 
       {showNote && (
         <textarea

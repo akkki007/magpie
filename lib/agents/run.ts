@@ -9,8 +9,9 @@ import { readModel } from "@/lib/model/persist";
 
 import { createFinanceOpsAgent } from "./finance-ops";
 import { makePlan } from "./planner";
-import { recordProposed, settle, type Artifact } from "./artifacts";
+import { recordProposed, settle, show, type Artifact, type Naming } from "./artifacts";
 import type { Mode } from "./modes";
+import { renderFinding, type Finding, type Observer } from "./observe";
 import { WRITE_TOOLS } from "./tools";
 
 /**
@@ -25,6 +26,14 @@ import { WRITE_TOOLS } from "./tools";
  * marked experimental in the package's own types ("its API may change in future releases"),
  * and everything needed here — the todo list, the filesystem, the message history — is
  * already in the state snapshot. Stable API, same information.
+ *
+ * **The stream is not the whole story, though.** The supervisor holds no read tools, so every
+ * read happens inside a subagent — which deep agents run as a separate graph invocation
+ * inside the `task` tool, whose messages never reach the root state. Watching only the
+ * stream, a run showed "asked the data-analyst", then nothing at all for a minute, then a
+ * paragraph of conclusions. The tools report themselves through an `Observer` instead
+ * (`lib/agents/observe.ts`), which is what makes both the trail and the canvas show the
+ * work rather than the gaps between it.
  */
 
 export type Step = {
@@ -53,8 +62,18 @@ const asJson = (value: unknown) => value as Prisma.InputJsonValue;
 /** The model a run reads. One for now, like the board. */
 const MODEL_SLUG = "revenue-model-2026";
 
-/** Snapshots are frequent and mostly unchanged; writing every one would be a write per token. */
-const WRITE_EVERY_MS = 1200;
+/** Frequent and mostly unchanged; writing every snapshot would be a write per token. */
+const WRITE_EVERY_MS = 500;
+
+/**
+ * How often progress is pushed while the graph is busy.
+ *
+ * A ticker rather than only writing when a snapshot arrives, because the root graph emits
+ * *nothing* while a subagent runs — and a subagent is where a run spends most of its time.
+ * Flushing only on snapshots meant the canvas froze for the whole of every delegation and
+ * then jumped. This is what makes it live.
+ */
+const TICK_MS = 600;
 
 type State = {
   messages?: unknown[];
@@ -82,8 +101,11 @@ export async function resumeRun(
   const declined = (run.declined as string[] | null) ?? [];
   const carriedSteps = steps(run);
 
-  const carriedArtifacts =
-    decision.type === "reject" ? settle(artifactsOf(run), "declined") : artifactsOf(run);
+  /* Declining settles only the cards for the tools that were actually declined. */
+  let carriedArtifacts = artifactsOf(run);
+  if (decision.type === "reject") {
+    for (const action of pending) carriedArtifacts = settle(carriedArtifacts, "declined", { tool: action.name });
+  }
 
   if (decision.type === "reject") {
     for (const step of carriedSteps) {
@@ -110,16 +132,6 @@ export async function resumeRun(
 
 const steps = (run: { steps: unknown }) => ((run.steps as Step[] | null) ?? []);
 
-/**
- * `createTable` returns JSON carrying the new table's url; pulled out so the canvas card can
- * link to the real thing once it exists. Anything else has no slug and the card stays inert.
- */
-function slugFrom(name: string, message: unknown): { slug?: string } | undefined {
-  if (name !== "createTable") return undefined;
-  const text = textOf((message as LooseMessage).content);
-  const match = /"url"\s*:\s*"\/databases\/([^"]+)"/.exec(text);
-  return match ? { slug: match[1] } : undefined;
-}
 const artifactsOf = (run: { artifacts: unknown }) => ((run.artifacts as Artifact[] | null) ?? []);
 
 /** The model and tables a run reads. Loaded twice per run — once to plan, once to work. */
@@ -265,7 +277,12 @@ const ACTIVITY: Record<string, string> = {
  */
 function advance(todos: Todo[], steps: Step[]): Todo[] {
   const milestones = steps.filter(
-    (step) => step.kind === "subagent" || WRITE_TOOLS.includes(step.name as (typeof WRITE_TOOLS)[number]),
+    (step) =>
+      step.kind === "subagent" ||
+      // A write counts once — when it is put to a person. Its later "created" step is the
+      // same milestone reached, and counting both would tick two plan items for one act.
+      (step.detail === "waiting for approval" &&
+        WRITE_TOOLS.includes(step.name as (typeof WRITE_TOOLS)[number])),
   ).length;
 
   const reported = todos.filter((t) => t.status === "completed").length;
@@ -307,7 +324,6 @@ async function drive(
     return;
   }
 
-  const agent = await createFinanceOpsAgent({ ...context, actor }, carry.mode);
   const config = { configurable: { thread_id: runId }, recursionLimit: 60 };
 
   const steps = carry.steps;
@@ -318,22 +334,95 @@ async function drive(
   let seenMessages = 0;
   let lastWrite = 0;
   let autoRejects = 0;
+  let dirty = false;
+  let writing = false;
+  let closed = false;
+  let finding: Finding | null = null;
   let input: unknown = firstInput;
+
+  /**
+   * What the tools report into.
+   *
+   * Every tool call lands here — including the ones inside subagents, which the message
+   * stream cannot see. That is the difference between a trail that reads "asked the
+   * data-analyst" and one that reads "sampled 5 of 173 rows in Customers · rolled them into
+   * periods · summed 6 values → 32".
+   */
+  const observer: Observer = {
+    ran(name, detail) {
+      steps.push({ at: new Date().toISOString(), kind: "tool", name, detail });
+      dirty = true;
+    },
+    show(key, card) {
+      artifacts = show(artifacts, key, card);
+      dirty = true;
+    },
+    settled(name, status, detail) {
+      const outcome =
+        status === "created" ? (detail?.note ?? "done") : `refused: ${detail?.note ?? "rejected"}`;
+
+      /**
+       * The *same* step, updated — not a second one.
+       *
+       * A write already has a line in the trail from the moment it was put to a person, so
+       * pushing its outcome as well gave every approved write two entries: "Asked to create
+       * a table" followed by "Created the table". One act, two lines, and the second read
+       * like a second attempt.
+       */
+      const asked = [...steps].reverse().find((step) => step.name === name && step.detail === "waiting for approval");
+      if (asked) asked.detail = outcome;
+      else steps.push({ at: new Date().toISOString(), kind: "tool", name, detail: outcome });
+
+      artifacts = settle(artifacts, status, { tool: name, slug: detail?.slug });
+      dirty = true;
+    },
+    finding(submitted) {
+      finding = submitted;
+      steps.push({ at: new Date().toISOString(), kind: "message", name: "finding", detail: submitted.answer });
+      dirty = true;
+    },
+  };
+
+  const agent = await createFinanceOpsAgent({ ...context, actor, observe: observer }, carry.mode);
+
+  /** Ids and period indices are the wrong thing to show someone deciding on a change. */
+  const naming: Naming = {
+    variable: (id) => context.model.variables.find((v) => v.id === id)?.name ?? id,
+    period: (index) => context.model.periods[index]?.label ?? `period ${index}`,
+    scenario: (id) => context.model.scenarios.find((sc) => sc.id === id)?.name ?? id,
+  };
 
   const flush = async (force = false) => {
     const now = Date.now();
-    if (!force && now - lastWrite < WRITE_EVERY_MS) return;
+    if (closed) return;
+    if (!force && (!dirty || now - lastWrite < WRITE_EVERY_MS)) return;
+    if (writing) return;
+
+    writing = true;
+    dirty = false;
     lastWrite = now;
-    await db.agentRun.update({
-      where: { id: runId },
-      data: {
-        plan: asJson(advance(todos, steps)),
-        steps: asJson(steps),
-        files: asJson(files),
-        artifacts: asJson(artifacts),
-        activity: activityOf(steps.at(-1)),
-      },
-    });
+    try {
+      await db.agentRun.update({
+        where: { id: runId },
+        data: {
+          plan: asJson(advance(todos, steps)),
+          steps: asJson(steps),
+          files: asJson(files),
+          artifacts: asJson(artifacts),
+          activity: activityOf(steps.at(-1)),
+        },
+      });
+    } finally {
+      writing = false;
+    }
+  };
+
+  /* Progress is pushed on a clock, not only when the graph speaks — see TICK_MS. */
+  const ticker = setInterval(() => void flush().catch(() => {}), TICK_MS);
+  /** Stops the ticker before a terminal write, so nothing races DONE back to "running". */
+  const close = () => {
+    closed = true;
+    clearInterval(ticker);
   };
 
   try {
@@ -364,20 +453,20 @@ async function drive(
         const messages = Array.isArray(state.messages) ? state.messages : [];
         if (messages.length > seenMessages) {
           const fresh = messages.slice(Math.max(seenMessages, resumeFloor(seenMessages, messages.length)));
-          for (const message of fresh) {
-            const produced = stepsFrom(message);
-            steps.push(...produced);
-
-            // A write that actually ran settles its card, so "created" on the canvas means
-            // the tool returned success — not merely that a human said yes.
-            for (const step of produced) {
-              if (step.detail === "done") artifacts = settle(artifacts, "created", slugFrom(step.name, message));
-              else if (step.detail?.startsWith("refused")) artifacts = settle(artifacts, "failed");
-            }
-          }
+          for (const message of fresh) steps.push(...stepsFrom(message));
         }
         seenMessages = messages.length;
 
+        /**
+         * Every snapshot counts as a change.
+         *
+         * `dirty` exists so the *ticker* does not write an identical row every 600ms through
+         * a quiet stretch. A snapshot is not a quiet stretch — the graph only emits one when
+         * something moved — and gating on the observer alone was wrong: a plan updating or a
+         * message arriving sets neither, so the todo list would have frozen mid-run while
+         * the tool trail kept moving.
+         */
+        dirty = true;
         await flush();
       }
 
@@ -390,6 +479,7 @@ async function drive(
       const interrupts = snapshot.tasks?.flatMap((t) => t.interrupts ?? []) ?? [];
 
       if (interrupts.length === 0) {
+        close();
         for (const step of steps) {
           if (step.detail === "waiting for approval") step.detail = "approved";
         }
@@ -407,7 +497,15 @@ async function drive(
             artifacts: asJson(artifacts),
             pending: asJson([]),
             declined: asJson(declined),
-            result: finalText(snapshot.values ?? {}),
+            /**
+             * The submitted finding, when there is one.
+             *
+             * `finalText` — the last thing the model happened to say — is the fallback, not
+             * the plan. A run that reports through a schema cannot pad, cannot list 24
+             * periods, and cannot lead with its workings; one that reports through whatever
+             * its last message contained did all three.
+             */
+            result: finding ? renderFinding(finding) : finalText(snapshot.values ?? {}),
             finishedAt: new Date(),
           },
         });
@@ -450,6 +548,7 @@ async function drive(
       }
 
       if (repeat && pending.length > 0) {
+        close();
         for (const step of steps) {
           if (step.detail === "waiting for approval") step.detail = "declined";
         }
@@ -476,7 +575,8 @@ async function drive(
        * card whatever the person decides — and so it survives the approval that clears
        * `pending`.
        */
-      artifacts = recordProposed(artifacts, pending, signature);
+      close();
+      artifacts = recordProposed(artifacts, pending, signature, naming);
 
       /* Mark the step and hand it to a human. */
       const halted = pending[0]?.name;
@@ -504,7 +604,10 @@ async function drive(
     }
   } catch (error) {
     await flush(true).catch(() => {});
+    close();
     await fail(runId, error instanceof Error ? error.message : String(error));
+  } finally {
+    close();
   }
 }
 
@@ -541,51 +644,33 @@ type LooseMessage = {
   tool_calls?: { name?: string; args?: unknown }[];
 };
 
+/**
+ * The two things only the message stream knows.
+ *
+ * Everything a *tool* did now arrives through the observer, including the tools inside
+ * subagents that this stream never sees. What is left is the supervisor's own behaviour:
+ * which subagent it delegated to, and what it wrote in prose. Tool calls are deliberately
+ * not read here any more — they were the same events the observer reports, arriving twice.
+ */
 function stepsFrom(message: unknown): Step[] {
   const m = message as LooseMessage;
   const at = new Date().toISOString();
   const type = m.getType?.() ?? m._getType?.() ?? "";
+  if (type === "tool") return [];
+
   const out: Step[] = [];
 
-  /**
-   * A tool *result* is not a step of its own — it is the outcome of one that already exists.
-   * Returned here so the caller can settle the matching artifact: an approved write that the
-   * tool then refused ("Rejected: …") must not sit on the canvas marked created.
-   */
-  if (type === "tool" && m.name) {
-    const text = textOf(m.content);
-    if (WRITE_TOOLS.includes(m.name as (typeof WRITE_TOOLS)[number])) {
-      const failed = /^(Rejected|No table|No board|A table already|That name)/.test(text.trim());
-      out.push({
-        at,
-        kind: "tool",
-        name: m.name,
-        detail: failed ? `refused: ${truncate(text, 120)}` : "done",
-      });
-    }
-    return out;
-  }
-
   for (const call of m.tool_calls ?? []) {
-    if (!call.name) continue;
     // `task` is how a deep agent delegates; naming the subagent reads better than the tool.
-    const isDelegation = call.name === "task";
+    if (call.name !== "task") continue;
     const target =
-      isDelegation && call.args && typeof call.args === "object"
+      call.args && typeof call.args === "object"
         ? String((call.args as { subagent_type?: string }).subagent_type ?? "subagent")
-        : call.name;
-
-    out.push({
-      at,
-      kind: isDelegation ? "subagent" : "tool",
-      name: target,
-      detail: WRITE_TOOLS.includes(call.name as (typeof WRITE_TOOLS)[number])
-        ? "waiting for approval"
-        : undefined,
-    });
+        : "subagent";
+    out.push({ at, kind: "subagent", name: target });
   }
 
-  if (type === "ai" && out.length === 0) {
+  if (type === "ai" && out.length === 0 && (m.tool_calls?.length ?? 0) === 0) {
     const text = textOf(m.content);
     if (text.trim()) out.push({ at, kind: "message", name: "thinking", detail: truncate(text) });
   }

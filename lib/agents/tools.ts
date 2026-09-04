@@ -19,6 +19,9 @@ import { CommandSchema } from "@/lib/model/command-schema";
 import type { Actor } from "@/lib/model/changesets";
 import type { Model } from "@/lib/model/types";
 
+import type { Draft } from "./artifacts";
+import { SILENT, type Observer } from "./observe";
+
 /**
  * The finance-ops agent's tools (`docs/agents-plan.md` A2).
  *
@@ -43,13 +46,24 @@ export type ToolContext = {
   modelId: string;
   tables: Table[];
   actor: Actor;
+  /**
+   * Where a tool reports what it just did. Optional so scripts can build the tool surface
+   * without a run behind it; `SILENT` keeps every tool working and records nothing.
+   */
+  observe?: Observer;
 };
 
 export function buildOpsTools(ctx: ToolContext) {
   const { model, modelId, tables, actor } = ctx;
+  const observe = ctx.observe ?? SILENT;
 
   const modelOutline = tool(
-    async () => JSON.stringify(getModelOutline(model)),
+    async () => {
+      const outline = getModelOutline(model);
+      observe.ran("getModelOutline", `${outline.variables.length} variables`);
+      observe.show("outline", outlineCard(outline));
+      return JSON.stringify(outline);
+    },
     {
       name: "getModelOutline",
       description:
@@ -59,7 +73,11 @@ export function buildOpsTools(ctx: ToolContext) {
   );
 
   const variable = tool(
-    async ({ variableId }) => JSON.stringify(getVariable(model, { variableId })),
+    async ({ variableId }) => {
+      const found = getVariable(model, { variableId });
+      observe.ran("getVariable", "error" in found ? found.error : found.name);
+      return JSON.stringify(found);
+    },
     {
       name: "getVariable",
       description: "Full detail on one variable, by id: kind, unit, formula, note.",
@@ -68,8 +86,26 @@ export function buildOpsTools(ctx: ToolContext) {
   );
 
   const series = tool(
-    async ({ variableId, scenarioId, member }) =>
-      JSON.stringify(getSeries(model, { variableId, scenarioId, member })),
+    async ({ variableId, scenarioId, member }) => {
+      const read = getSeries(model, { variableId, scenarioId, member });
+      if ("error" in read) {
+        observe.ran("getSeries", read.error);
+        return JSON.stringify(read);
+      }
+
+      observe.ran("getSeries", read.name);
+      observe.show(`series:${variableId}:${scenarioId ?? "base"}:${member ?? "TOTAL"}`, {
+        kind: "series",
+        status: "read",
+        title: member ? `${read.name} · ${member}` : read.name,
+        source: "model",
+        format: read.format,
+        periods: read.periods.map((p) => p.period),
+        series: [{ label: read.name, values: read.periods.map((p) => finite(p.value)) }],
+        note: scenarioId ? `Under scenario ${scenarioId}` : undefined,
+      });
+      return JSON.stringify(read);
+    },
     {
       name: "getSeries",
       description:
@@ -83,8 +119,16 @@ export function buildOpsTools(ctx: ToolContext) {
   );
 
   const scenario = tool(
-    async ({ commands, scenarioId }) =>
-      JSON.stringify(runScenario(model, { commands, scenarioId })),
+    async ({ commands, scenarioId }) => {
+      const rehearsal = runScenario(model, { commands, scenarioId });
+      observe.ran(
+        "runScenario",
+        "error" in rehearsal
+          ? rehearsal.error
+          : `${commands.length} command${commands.length === 1 ? "" : "s"}, nothing saved`,
+      );
+      return JSON.stringify(rehearsal);
+    },
     {
       name: "runScenario",
       description:
@@ -99,15 +143,17 @@ export function buildOpsTools(ctx: ToolContext) {
   );
 
   const tableList = tool(
-    async () =>
-      JSON.stringify(
+    async () => {
+      observe.ran("listTables", `${tables.length} table${tables.length === 1 ? "" : "s"}`);
+      return JSON.stringify(
         tables.map((t) => ({
           slug: t.slug,
           name: t.name,
           rows: t.rows.length,
           fields: t.fields.map((f) => ({ id: f.id, name: f.name, type: f.type })),
         })),
-      ),
+      );
+    },
     {
       name: "listTables",
       description: "The database tables and their typed columns. Field ids come from here.",
@@ -123,10 +169,29 @@ export function buildOpsTools(ctx: ToolContext) {
   const sample = tool(
     async ({ tableSlug, limit }) => {
       const table = tables.find((t) => t.slug === tableSlug);
-      if (!table) return `No table "${tableSlug}". Available: ${tables.map((t) => t.slug).join(", ")}.`;
+      if (!table) {
+        observe.ran("sampleTable", `no table "${tableSlug}"`);
+        return `No table "${tableSlug}". Available: ${tables.map((t) => t.slug).join(", ")}.`;
+      }
+
       const names = new Map(table.fields.map((f) => [f.id, f.name]));
+      const rows = table.rows.slice(0, Math.min(limit ?? 5, 20));
+
+      observe.ran("sampleTable", `${rows.length} of ${table.rows.length} rows in ${table.name}`);
+      /* The same rows the agent is reading, drawn as the grid they came out of. */
+      observe.show(`records:${table.slug}`, {
+        kind: "records",
+        status: "read",
+        slug: table.slug,
+        name: table.name,
+        columns: table.fields.map((f) => ({ name: f.name, type: f.type })),
+        rows: rows.map((row) => table.fields.map((f) => cellOf(row.cells[f.id]))),
+        showing: rows.length,
+        total: table.rows.length,
+      });
+
       return JSON.stringify(
-        table.rows.slice(0, Math.min(limit ?? 5, 20)).map((row) =>
+        rows.map((row) =>
           Object.fromEntries(
             Object.entries(row.cells).map(([id, value]) => [names.get(id) ?? id, value]),
           ),
@@ -144,7 +209,10 @@ export function buildOpsTools(ctx: ToolContext) {
   const aggregate = tool(
     async ({ tableSlug, dateFieldId, valueFieldId, aggregation, breakdownFieldId }) => {
       const table = tables.find((t) => t.slug === tableSlug);
-      if (!table) return `No table "${tableSlug}".`;
+      if (!table) {
+        observe.ran("aggregateTable", `no table "${tableSlug}"`);
+        return `No table "${tableSlug}".`;
+      }
 
       const spec = {
         dateFieldId,
@@ -156,7 +224,10 @@ export function buildOpsTools(ctx: ToolContext) {
         ? rollupByBreakdown(table, model, { ...spec, breakdownFieldId })
         : rollupToSeries(table, model, spec);
 
-      if (!result.ok) return `Could not aggregate: ${result.error}`;
+      if (!result.ok) {
+        observe.ran("aggregateTable", result.error);
+        return `Could not aggregate: ${result.error}`;
+      }
 
       // The two rollups return the same fields but a different `series` shape — one series
       // per category, or one bare array. Branched rather than probed, so the difference is
@@ -170,17 +241,55 @@ export function buildOpsTools(ctx: ToolContext) {
             },
           ];
 
+      const outside = result.unmatched.length;
+      const counted = result.total - outside;
+      const label = `${aggregation} over ${table.name}`;
+
+      observe.ran(
+        "aggregateTable",
+        `${label} · ${counted} record${counted === 1 ? "" : "s"}${outside > 0 ? `, ${outside} outside the horizon` : ""}`,
+      );
+      observe.show(`rollup:${table.slug}:${dateFieldId}:${valueFieldId ?? "count"}:${breakdownFieldId ?? "none"}`, {
+        kind: "series",
+        status: "read",
+        title: label,
+        source: "records",
+        // A COUNT is a count of records whatever the column was. SUM and AVG inherit the
+        // column's meaning, so the format comes from the column's own type rather than a
+        // guess — summing a NUMBER column and drawing it as money is a lie in the axis.
+        format: formatOf(aggregation, table.fields.find((f) => f.id === valueFieldId)?.type),
+        periods: model.periods.map((p) => p.label),
+        series: series.map((s) => ({ label: s.label, values: s.values.map(finite) })),
+        note:
+          outside > 0
+            ? `${outside} record${outside === 1 ? "" : "s"} fall outside the model's horizon and are not counted here.`
+            : undefined,
+      });
+
+      /**
+       * **`recordsCounted` is the point of this block, and it used to be missing.**
+       *
+       * The rollup has always computed the record total; this tool dropped it and returned
+       * only the per-period series. So an agent asked "how many customers are there?" had no
+       * figure to cite and two ways to proceed: add up 24 numbers itself (which it is told
+       * not to do, and which needs a second tool call), or fill the gap. A live run filled
+       * the gap with **0** — and then, three sentences later, correctly described onboarding
+       * peaking at 8 in Apr '27. An answer that contradicts itself inside one paragraph, out
+       * of a tool that knew the right number the whole time and did not pass it on.
+       */
       return JSON.stringify({
         periods: model.periods.map((p) => p.label),
         series,
+        recordsCounted: counted,
+        recordsOutsideHorizon: outside,
+        datedRecords: result.total,
         periodsCovered: result.matched,
-        recordsOutsideHorizon: result.unmatched.length,
       });
     },
     {
       name: "aggregateTable",
       description:
-        "Roll a table's records up into the model's periods: COUNT of records, or SUM/AVG of a numeric column, optionally split by a SELECT column. This is how you turn records into a series.",
+        "Roll a table's records up into the model's periods: COUNT of records, or SUM/AVG of a numeric column, optionally split by a SELECT column. This is how you turn records into a series. The result also carries recordsCounted — the number of records that went into it — so use that figure directly when asked how many there are, rather than adding the series up yourself. recordsOutsideHorizon are records the model's periods do not span; say so when it matters.",
       schema: z.object({
         tableSlug: z.string(),
         dateFieldId: z.string(),
@@ -205,23 +314,31 @@ export function buildOpsTools(ctx: ToolContext) {
     async ({ values, operation }) => {
       if (values.length === 0) return "No values given.";
       const sum = values.reduce((a, b) => a + b, 0);
+      /* The inputs and the answer, both, so a reader can check the sum that ends up in the
+         memo without rerunning anything. */
+      const said = (answer: string) => {
+        observe.ran("calculate", `${operation} of ${values.length} values → ${answer}`);
+        return answer;
+      };
       switch (operation) {
         case "sum":
-          return String(sum);
+          return said(String(sum));
         case "mean":
-          return String(sum / values.length);
+          return said(String(sum / values.length));
         case "min":
-          return String(Math.min(...values));
+          return said(String(Math.min(...values)));
         case "max":
-          return String(Math.max(...values));
+          return said(String(Math.max(...values)));
         case "change": {
           if (values.length < 2) return "Change needs at least two values.";
           const [first, last] = [values[0], values[values.length - 1]];
           const pct = first === 0 ? null : ((last - first) / Math.abs(first)) * 100;
-          return JSON.stringify({
-            absolute: last - first,
-            percent: pct === null ? "undefined (first value is zero)" : Number(pct.toFixed(2)),
-          });
+          return said(
+            JSON.stringify({
+              absolute: last - first,
+              percent: pct === null ? "undefined (first value is zero)" : Number(pct.toFixed(2)),
+            }),
+          );
         }
       }
     },
@@ -236,8 +353,57 @@ export function buildOpsTools(ctx: ToolContext) {
     },
   );
 
+  /**
+   * How a run says what it found.
+   *
+   * **A schema, because the instruction did not hold.** The prompt asked for under 150 words
+   * and no per-period lists; runs answered with a bullet for all 24 months anyway —
+   * transcribing in prose the exact chart drawn beside them, and burying the finding in it.
+   * One opened with "0 customers are recorded" and three sentences later described
+   * onboarding peaking at 8 in Apr '27: an answer arguing with itself.
+   *
+   * Asking more firmly was tried. This is the same move the repo already makes everywhere
+   * else — the proposal tool takes the real `CommandSchema` rather than `z.any()`, and the
+   * grid's commands are typed rather than described. A limit a model is asked to respect is
+   * a suggestion; a limit in a schema is refused and retried. So the shape of an answer is
+   * now `answer / evidence / next`, with lengths that make a 24-item list impossible to
+   * submit rather than merely discouraged.
+   */
+  const submit = tool(
+    async ({ answer, evidence, next }) => {
+      observe.finding({ answer, evidence, next });
+      return "Recorded — that is your answer. Stop now; do not write it out again in prose.";
+    },
+    {
+      name: "submitFinding",
+      description:
+        "Submit your answer. This is how a run finishes: call it once, last, and stop. Everything you read is already drawn beside your answer, so do not list periods, rows or columns here — cite the figures that carry the point and nothing else.",
+      schema: z.object({
+        answer: z
+          .string()
+          .min(1)
+          .max(320)
+          .describe("The answer itself, in one or two sentences. Lead with the number if the question had one."),
+        evidence: z
+          .array(z.string().min(1).max(160))
+          .min(1)
+          .max(4)
+          .describe("At most four lines. Each is one figure and where it came from — a variable, a table, the periods."),
+        next: z
+          .string()
+          .max(200)
+          .optional()
+          .describe("One sentence: what you would do about it, or what you built."),
+      }),
+    },
+  );
+
   const boards = tool(
-    async () => JSON.stringify(await listBoards(db)),
+    async () => {
+      const found = await listBoards(db);
+      observe.ran("listBoards", `${found.length} board${found.length === 1 ? "" : "s"}`);
+      return JSON.stringify(found);
+    },
     {
       name: "listBoards",
       description: "The boards a tile can be added to, with their slugs.",
@@ -250,7 +416,10 @@ export function buildOpsTools(ctx: ToolContext) {
   const propose = tool(
     async ({ label, commands }) => {
       const grounded = groundProposal(model, { label, commands });
-      if (!grounded.ok) return `Rejected: ${grounded.error}`;
+      if (!grounded.ok) {
+        observe.settled("proposeModelChanges", "failed", { note: grounded.error });
+        return `Rejected: ${grounded.error}`;
+      }
 
       // The caller mints the id, the same way the grid does (M3.2) — so the proposal can
       // be named in the run's steps without waiting to be told what it was called.
@@ -265,6 +434,7 @@ export function buildOpsTools(ctx: ToolContext) {
         }),
       );
 
+      observe.settled("proposeModelChanges", "created", { note: grounded.label });
       return `Proposed "${grounded.label}" as changeset ${changeSetId} — staged for a human to accept or reject. It has NOT been applied.`;
     },
     {
@@ -295,23 +465,32 @@ export function buildOpsTools(ctx: ToolContext) {
 
   const boardTile = tool(
     async ({ boardSlug, spec }) => {
+      const refuse = (why: string) => {
+        observe.settled("addBoardTile", "failed", { note: why });
+        return `Rejected: ${why}`;
+      };
+
       const board = await readBoard(db, boardSlug);
-      if (!board) return `No board "${boardSlug}".`;
+      if (!board) return refuse(`No board "${boardSlug}".`);
 
       const parsed = TileSpec.safeParse(spec);
       if (!parsed.success) {
-        return `That tile is not well-formed: ${parsed.error.issues
-          .map((i) => `${i.path.join(".")}: ${i.message}`)
-          .join("; ")}`;
+        return refuse(
+          `that tile is not well-formed — ${parsed.error.issues
+            .map((i) => `${i.path.join(".")}: ${i.message}`)
+            .join("; ")}`,
+        );
       }
 
       const grounded = groundTile(parsed.data, model, tables);
-      if (!grounded.ok) return `Rejected: ${grounded.error}`;
+      if (!grounded.ok) return refuse(grounded.error);
 
       const resolved = resolveTile(grounded.spec, { model, tables });
-      if (!resolved.ok) return `Rejected: ${resolved.error}`;
+      if (!resolved.ok) return refuse(resolved.error);
 
       const tile = await addTile(db, board.id, grounded.spec, null);
+      /* No slug: a tile card is identified by the board it went on, which it already has. */
+      observe.settled("addBoardTile", "created", { note: board.title });
       return `Added tile ${tile.id} to ${board.title}.`;
     },
     {
@@ -347,14 +526,21 @@ export function buildOpsTools(ctx: ToolContext) {
         .trim()
         .replace(/[^a-z0-9]+/g, "-")
         .replace(/^-|-$/g, "");
-      if (!slug) return "That name does not produce a usable URL slug.";
+      const refuse = (why: string) => {
+        observe.settled("createTable", "failed", { note: why });
+        return why;
+      };
+
+      if (!slug) return refuse("That name does not produce a usable URL slug.");
 
       const existing = await db.dataTable.findUnique({ where: { slug }, select: { id: true } });
-      if (existing) return `A table already lives at "${slug}". Pick a different name.`;
+      if (existing) return refuse(`A table already lives at "${slug}". Pick a different name.`);
 
       const dates = fields.filter((f) => f.type === "DATE").length;
       if (dates === 0) {
-        return "Every table needs at least one DATE column, or its records can never be rolled up into the model's periods — which is the whole point of a table here.";
+        return refuse(
+          "Every table needs at least one DATE column, or its records can never be rolled up into the model's periods — which is the whole point of a table here.",
+        );
       }
 
       const table = await db.dataTable.create({
@@ -382,6 +568,7 @@ export function buildOpsTools(ctx: ToolContext) {
         include: { fields: true },
       });
 
+      observe.settled("createTable", "created", { slug, note: table.name });
       return JSON.stringify({
         created: table.name,
         url: `/databases/${slug}`,
@@ -417,6 +604,7 @@ export function buildOpsTools(ctx: ToolContext) {
   );
 
   return [
+    submit,
     modelOutline,
     variable,
     series,
@@ -430,4 +618,47 @@ export function buildOpsTools(ctx: ToolContext) {
     propose,
     boardTile,
   ];
+}
+
+/* ── Turning a tool's own result into a card ──────────────────────────────
+ *
+ * Built from the value the tool just computed, never re-parsed out of the JSON it returned.
+ * The previous version scraped a slug back out of `createTable`'s response with a regex,
+ * which made a tool's prose an API that nobody knew they were maintaining. */
+
+/**
+ * Chart values are `number[]`, so a period a variable has no value in becomes 0 rather than
+ * a hole. Honest for these two callers: the model evaluates every period, and a rollup emits
+ * a bucket per period, so a missing value here means "nothing in this period", which 0 is
+ * the correct drawing of.
+ */
+/** What a rolled-up series is measured in, from the column it came out of. */
+function formatOf(aggregation: string, fieldType: string | undefined): "CURRENCY" | "COUNT" {
+  if (aggregation === "COUNT") return "COUNT";
+  return fieldType === "CURRENCY" ? "CURRENCY" : "COUNT";
+}
+
+const finite = (value: unknown) => (typeof value === "number" && Number.isFinite(value) ? value : 0);
+
+/** Cells arrive as whatever the column's type stores; the canvas draws text and numbers. */
+function cellOf(value: unknown): string | number | null {
+  if (value === null || value === undefined) return null;
+  if (typeof value === "number" || typeof value === "string") return value;
+  return String(value);
+}
+
+function outlineCard(outline: ReturnType<typeof getModelOutline>): Draft {
+  const { first, last, count } = outline.periods;
+  return {
+    kind: "outline",
+    status: "read",
+    name: outline.name,
+    horizon: `${first ?? "?"} – ${last ?? "?"} · ${count} periods`,
+    groups: outline.groups.map((group) => ({
+      name: group.name,
+      variables: outline.variables
+        .filter((v) => v.groupId === group.id)
+        .map((v) => ({ name: v.name, kind: v.kind, formula: v.formula })),
+    })),
+  };
 }

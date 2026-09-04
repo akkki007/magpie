@@ -32,7 +32,6 @@ export function PlanCard({
   todos,
   steps,
   running,
-  activity,
 }: {
   task: string;
   title?: string | null;
@@ -41,7 +40,6 @@ export function PlanCard({
   steps: Step[];
   running: boolean;
   /** What the run is doing right now, from `lib/agents/run.ts`. */
-  activity?: string | null;
 }) {
   const [open, setOpen] = useState(true);
 
@@ -55,7 +53,12 @@ export function PlanCard({
         <Sparkles className="h-3.5 w-3.5 text-violet-500" strokeWidth={1.75} aria-hidden />
         {running ? (
           <>
-            <span>{activity ?? "Working"}</span>
+            {/* The live sentence lives on the canvas, which is where the work is. Repeating
+                it here put the same clause in both panes; the count is the thing this side
+                can say that the other one cannot. */}
+            <span>
+              {steps.length} step{steps.length === 1 ? "" : "s"} so far
+            </span>
             <Loader2 className="h-3 w-3 animate-spin text-ink-faint" aria-hidden />
           </>
         ) : (

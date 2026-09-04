@@ -12,6 +12,12 @@ import type { Step } from "@/lib/agents/run";
  * subagent it asked, which table it read, whether it did its arithmetic with the calculator
  * — because that is what makes the answer checkable. The prose is in the result and the
  * files; this is the provenance.
+ *
+ * It now includes the tools the *subagents* called, which it could not before: the
+ * supervisor holds no read tools, so everything worth recording happened inside a `task`
+ * call the message stream cannot see into. The tools report themselves instead
+ * (`lib/agents/observe.ts`), which is why a line here can say "5 of 173 rows in Customers"
+ * rather than just "asked the data-analyst".
  */
 
 const ICONS: Record<string, typeof Bot> = {
@@ -44,11 +50,47 @@ const LABELS: Record<string, string> = {
   listTables: "Listed the tables",
   sampleTable: "Sampled a table",
   aggregateTable: "Rolled records into periods",
-  createTable: "Proposed a new table",
   listBoards: "Listed the boards",
-  proposeModelChanges: "Proposed model changes",
-  addBoardTile: "Added a board tile",
 };
+
+/**
+ * A write leaves two lines: the moment it was put to a person, and what became of it.
+ * One label for both would misreport one of them — "Proposed a new table — Vendor
+ * Invoices" reads as a second proposal when it is the confirmation that the first one
+ * landed. So each write tool names its own three outcomes.
+ */
+const WRITES: Record<string, { asked: string; done: string; refused: string }> = {
+  createTable: {
+    asked: "Asked to create a table",
+    done: "Created the table",
+    refused: "The table was refused",
+  },
+  proposeModelChanges: {
+    asked: "Asked to stage plan changes",
+    done: "Staged the changes for review",
+    refused: "The proposal was refused",
+  },
+  addBoardTile: {
+    asked: "Asked to add a board tile",
+    done: "Added the tile",
+    refused: "The tile was refused",
+  },
+};
+
+function labelFor(step: Step): string {
+  if (step.kind === "subagent") return `Asked ${step.name}`;
+  if (step.kind === "message") return "Wrote the answer";
+
+  const write = WRITES[step.name];
+  if (write) {
+    if (step.detail === "waiting for approval") return write.asked;
+    if (step.detail === "declined") return "You declined it";
+    if (step.detail?.startsWith("refused")) return write.refused;
+    return write.done;
+  }
+
+  return LABELS[step.name] ?? step.name;
+}
 
 export function Steps({ steps }: { steps: Step[] }) {
   if (steps.length === 0) {
@@ -61,11 +103,10 @@ export function Steps({ steps }: { steps: Step[] }) {
         const isSubagent = step.kind === "subagent";
         const isThought = step.kind === "message";
         const Icon = isSubagent ? Bot : (ICONS[step.name] ?? Sparkles);
-        const label = isSubagent
-          ? `Asked ${step.name}`
-          : isThought
-            ? "Wrote the answer"
-            : (LABELS[step.name] ?? step.name);
+        const label = labelFor(step);
+        // The detail already reads as the label for a settled write ("Created the table —
+        // Vendor Invoices" is right; "— done" is noise).
+        const detail = step.detail === "done" ? undefined : step.detail;
 
         return (
           <li
@@ -85,8 +126,8 @@ export function Steps({ steps }: { steps: Step[] }) {
             <span className="min-w-0 flex-1">
               <span className="block text-[12px] text-ink-2">
                 {label}
-                {step.detail && !isThought && (
-                  <span className="ml-1.5 text-[11px] text-ink-faint">— {step.detail}</span>
+                {detail && !isThought && (
+                  <span className="ml-1.5 text-[11px] text-ink-faint">— {detail}</span>
                 )}
               </span>
               {isThought && step.detail && (

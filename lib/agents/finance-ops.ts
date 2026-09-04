@@ -1,5 +1,5 @@
 import { ChatOpenAI } from "@langchain/openai";
-import { createDeepAgent } from "deepagents";
+import { createDeepAgent, GENERAL_PURPOSE_SUBAGENT } from "deepagents";
 import { todoListMiddleware } from "langchain";
 
 import { buildOpsTools, WRITE_TOOLS, type ToolContext } from "./tools";
@@ -62,15 +62,39 @@ How to work:
    "How many customers onboarded in H1?" is a records question and belongs to data-analyst;
    answering it from the model's planned new-accounts line is a wrong answer that will look
    right. When a question could be either, ask both and say which is which.
+
+   There is also a subagent called general-purpose. **Never delegate to it.** It has no tools
+   and cannot read, write or find anything, so asking it spends a turn to be told to ask
+   somebody else. If a task fits neither analyst, it is a task you should be doing with your
+   own write tools, or one nothing here can do — say so.
 3. Write findings to files as you go with write_file (findings.md, and whatever else helps).
    Do not carry evidence in your head — you will need to cite it at the end.
-4. Finish with a short, direct answer in your final message: what you found, the numbers that
-   show it, and what you would do. Lead with the conclusion.
+4. **Finish by calling submitFinding, once, and then stop.** That call *is* your answer —
+   the person reads it, not your prose. Do not also write the answer out in a message; do
+   not restate the task or narrate your steps, which are all on screen beside you already.
+
+   **Never transcribe what is already drawn beside you.** Everything you read or build is
+   rendered on the canvas next to your answer — series as charts over every period, sampled
+   rows as a grid, a new table as its columns and their types. Writing those out reproduces
+   the picture and buries the point in it. So say the shape and name only the periods that
+   carry it — "onboarding runs 4–8 a month, rising through 2027, peaking in Apr '27 (8)" —
+   and never list a table's columns after creating it.
 
 Rules that are not negotiable:
 
 - **Ground every number.** Only cite figures a tool actually returned. Never estimate, never
-  fill a gap with a plausible-looking value, and never describe a trend you did not read.
+  fill a gap with a plausible-looking value, and never describe a trend you did not read. If
+  a number you want was not returned by anything, the answer is "the tools do not report
+  that" — not a zero, and not a round figure that looks about right.
+- **Read your answer back before you send it.** If two sentences disagree about a number, at
+  least one of them is wrong, and shipping both is worse than shipping neither. One run
+  opened with "0 customers are recorded" and three sentences later described onboarding
+  peaking at 8 in Apr '27. Go back and check rather than sending a paragraph that argues
+  with itself.
+- **Say where each number came from** — which variable, which table, which periods. "173
+  customers (Customers table, Jan–Jun 2026)" is checkable; "roughly 170 customers" is not.
+- **Never round a figure a tool gave you exactly**, and never carry a number from one
+  subagent's report into a sentence about another's without saying which is which.
 - **Never do arithmetic yourself.** Any total, average or percentage change goes through the
   calculate tool, including "just adding up" six numbers you already have. A run has already
   added 6+4+5+5+6+6 and reported 31.
@@ -125,6 +149,69 @@ that support it, then what to do. No preamble, no restating the question.
 Cite only figures that appear in the files you were given. If the evidence does not support a
 claim, drop the claim.`;
 
+type Tools = ReturnType<typeof buildOpsTools>;
+
+/**
+ * The subagents, as data.
+ *
+ * Exported so `ops:check` can assert the property that actually matters — that **no subagent
+ * can reach a write tool** — rather than trusting the reading of this file. Subagents do not
+ * get the human-in-the-loop middleware (see the note on general-purpose below), so a write
+ * tool in one of these lists is a write with no approval gate. That is the one invariant
+ * here worth a test.
+ */
+export function opsSubagents(tools: Tools) {
+  const byName = (names: readonly string[]) => tools.filter((t) => names.includes(t.name));
+
+  return [
+    {
+      name: "model-analyst",
+      description:
+        "Reads the financial model — variables, formulas, series over the horizon, and hypothetical scenarios. Ask it narrow questions about the plan's numbers.",
+      systemPrompt: MODEL_ANALYST_PROMPT,
+      tools: byName(["getModelOutline", "getVariable", "getSeries", "runScenario", "calculate"]),
+    },
+    {
+      name: "data-analyst",
+      description:
+        "Reads the database tables — columns, sample rows, and rollups of records into the model's periods. Ask it questions about records rather than about the plan.",
+      systemPrompt: DATA_ANALYST_PROMPT,
+      tools: byName(["listTables", "sampleTable", "aggregateTable", "calculate"]),
+    },
+    /**
+     * **Displacing the auto-added "general-purpose" subagent, which is a hole in the gate.**
+     *
+     * `createDeepAgent` adds one unless a subagent of the same name is already declared, and
+     * it is built with the *supervisor's* tool list — in `do` mode, all three write tools.
+     * Subagents do not get the human-in-the-loop middleware: `interruptOn` is applied to the
+     * main agent's own tool calls, and the subagent middleware in deepagents 1.13.2 is
+     * assembled without it (filesystem, summarization, patch-tool-calls, skills — no HITL).
+     * So a supervisor that delegated "create the table" to general-purpose would have had it
+     * created, with no approval, and the run would have reported success. The gate looked
+     * airtight from the outside and had a door in it.
+     *
+     * Declaring the name ourselves is the supported way to suppress it — the factory checks
+     * for exactly that. With no tools it cannot write, and the description sends the
+     * supervisor to the analyst that can actually answer.
+     */
+    {
+      name: GENERAL_PURPOSE_SUBAGENT.name,
+      description:
+        "UNAVAILABLE — has no tools and can do nothing. Delegating to it wastes a turn. Use model-analyst for the plan, data-analyst for the records.",
+      systemPrompt:
+        "You have no tools and cannot read or change anything. Reply in one sentence: the task should go to model-analyst if it is about the plan's forecast, or data-analyst if it is about records in the database.",
+      tools: [],
+    },
+    {
+      name: "report-writer",
+      description:
+        "Turns files of findings into a short memo. Give it the file names and the question that was asked.",
+      systemPrompt: WRITER_PROMPT,
+      tools: [],
+    },
+  ];
+}
+
 export async function createFinanceOpsAgent(ctx: ToolContext, mode: Mode = "do") {
   const tools = buildOpsTools(ctx);
   const byName = (names: readonly string[]) => tools.filter((t) => names.includes(t.name));
@@ -149,30 +236,10 @@ export async function createFinanceOpsAgent(ctx: ToolContext, mode: Mode = "do")
     systemPrompt: `${SUPERVISOR_PROMPT}\n\n${modeGuidance(mode)}`,
     // The mode decides which writes exist at all — see `lib/agents/modes.ts`. In `ask`
     // and `plan` this list is just the calculator.
-    tools: byName([...toolsFor(mode, WRITE_TOOLS), "calculate"]),
-    subagents: [
-      {
-        name: "model-analyst",
-        description:
-          "Reads the financial model — variables, formulas, series over the horizon, and hypothetical scenarios. Ask it narrow questions about the plan's numbers.",
-        systemPrompt: MODEL_ANALYST_PROMPT,
-        tools: byName(["getModelOutline", "getVariable", "getSeries", "runScenario", "calculate"]),
-      },
-      {
-        name: "data-analyst",
-        description:
-          "Reads the database tables — columns, sample rows, and rollups of records into the model's periods. Ask it questions about records rather than about the plan.",
-        systemPrompt: DATA_ANALYST_PROMPT,
-        tools: byName(["listTables", "sampleTable", "aggregateTable", "calculate"]),
-      },
-      {
-        name: "report-writer",
-        description:
-          "Turns files of findings into a short memo. Give it the file names and the question that was asked.",
-        systemPrompt: WRITER_PROMPT,
-        tools: [],
-      },
-    ],
+    // `submitFinding` in every mode: it is how a run reports, not something it changes.
+    tools: byName([...toolsFor(mode, WRITE_TOOLS), "calculate", "submitFinding"]),
+    subagents: opsSubagents(tools),
+
     /**
      * The planning tool, added explicitly.
      *

@@ -245,3 +245,122 @@ in place afterwards. Four states, and the distinction between the last two is de
 created means the write actually landed rather than that someone permitted it. A created
 table carries its slug and the card links to the real thing. Collapsing `failed` into
 `declined` would blame the wrong party.
+
+## 10. The canvas was blind to nine-tenths of the run
+
+Section 9 made the card outlive the decision. It did not fix the larger problem: cards only
+existed *at* the decision. A run that read four tables, rolled 157 records into 24 periods
+and answered a question built nothing — so the canvas said "nothing built yet" for the whole
+minute of work, then flashed a table if the run happened to want one, and went quiet again.
+The pane meant to show the work showed the receipt.
+
+**The cause was structural, not cosmetic.** The supervisor holds no read tools — that is
+deliberate (§6), and the reason it delegates at all. But deep agents run a subagent as a
+separate graph invocation inside the `task` tool, and those messages never reach the root
+state. So the run's own `streamMode: "values"` loop could see *only* the supervisor: "asked
+the data-analyst", a minute of silence, a paragraph of conclusions. Every read that produced
+a number in the answer was invisible to the thing whose job was to display it.
+
+### 10.1 Tools report themselves
+
+`lib/agents/observe.ts`. Each tool is handed an `Observer` when it is built and calls it with
+what it just did, plus a card when it read something worth looking at. Two consequences:
+
+- The trail and the canvas show the *subagents'* work. A line now reads `aggregateTable —
+  COUNT over Customers · 16 records outside the horizon`, which is checkable, where before
+  there was nothing between the delegation and the answer.
+- **Nothing is parsed back out of tool output any more.** The previous version scraped the
+  new table's slug out of `createTable`'s JSON with a regex, and decided a write had failed
+  by matching the first word of its result against `/^(Rejected|No table|A table already…)/`.
+  Both made a tool's private prose an API nobody knew they were maintaining. A tool now says
+  what happened, because it is the only thing that knows.
+
+Progress is also pushed on a **clock** (`TICK_MS`), not only when the graph speaks. The root
+graph emits nothing while a subagent runs, which is where a run spends most of its time, so
+flushing on snapshots alone froze the canvas through every delegation and then jumped.
+
+### 10.2 Views and builds
+
+One column, in the order things happened. **Views** (`outline`, `records`, `series`) are
+reads: quiet, no status, evicted oldest-first once the canvas is full. **Builds** (`table`,
+`proposal`, `tile`) are writes: they carry a status, they are never evicted. A series is
+drawn by the board's own `BoardChart` rather than a second chart implementation, and a
+proposal is rendered as sentences with real variable and period names — "Set New Accounts ·
+Jul 2026 to 2", not `{"variableId":"v_new_accounts","period":6}` — with the raw arguments one
+disclosure away, because an approval screen must never *hide* what it is asking about.
+
+`settle()` is scoped to the tool that settled. An interrupt carries `actionRequests` as an
+array, so a run can halt on two writes at once, and the first to return would otherwise have
+marked the other created too.
+
+### 10.3 A door in the approval gate
+
+Found while wiring the above, and the most serious thing in this document.
+`createDeepAgent` **auto-adds a `general-purpose` subagent**, built from the *supervisor's*
+tool list — in `do` mode, all three write tools. Subagents do not get the human-in-the-loop
+middleware: `interruptOn` applies to the main agent's tool calls, and the subagent middleware
+in deepagents 1.13.2 is assembled from filesystem, summarization, patch-tool-calls and skills
+with no HITL. A supervisor that delegated "create the table" to general-purpose would have
+had it created, with no approval, and reported success. The gate looked airtight from the
+outside and had a door in it.
+
+It is suppressed by declaring a subagent of that name ourselves — the factory checks for
+exactly that — with no tools and a description that sends the supervisor to the analyst that
+can actually answer. `ops:check` now asserts the property rather than the fix: **no subagent
+holds a write tool.**
+
+### 10.4 Conciseness, asserted
+
+Asked when customers onboarded, a run answered with a bullet for all 24 months — writing out
+in prose the exact chart sitting beside it, and burying the finding in it. The prompt now
+says never to list a figure per period, and `ops:check` fails a run whose answer exceeds 200
+words or eight bullets. The canvas carries the series; the answer carries the point.
+
+### 10.5 The answer's shape is a schema, not a request
+
+The prompt asked for under 150 words, and said not to list a figure per period because the
+chart is drawn beside the answer. Runs did it anyway — one answered "when did they onboard?"
+with a bullet for all 24 months, reproducing in prose the exact picture next to it. Another
+opened with **"0 customers are recorded"** and three sentences later described onboarding
+peaking at 8 in Apr '27: a paragraph arguing with itself.
+
+The zero had a cause worth naming. `aggregateTable` computed the record total and **did not
+return it** — it passed back only the per-period series. So an agent asked "how many
+customers are there?" had no figure to cite and two ways forward: add up 24 numbers itself
+(which it is told not to do) or fill the gap. It filled the gap. The tool now returns
+`recordsCounted`, `recordsOutsideHorizon` and `datedRecords`, and `ops:check` asserts the
+three add up against the rows.
+
+Asking more firmly was tried and did not hold, so the shape moved into a schema. A run now
+finishes by calling **`submitFinding`** — `answer` capped at 320 characters, `evidence` at
+four lines of 160, an optional one-sentence `next` — and the run's result is rendered from
+that, with the last-message text kept only as a fallback. This is the same move the module
+already makes elsewhere: the proposal tool takes the real `CommandSchema` rather than
+`z.any()`, for the same reason. A limit a model is asked to respect is a suggestion; a limit
+in a schema is refused and retried.
+
+The question above now answers in 62 words and two bullets, with the right number in it.
+
+### 10.6 Assertions that watch, instead of inspecting
+
+Every check in `ops:check` used to read the run row *after* the run finished, and that blind
+spot is where both of this section's bugs lived: a canvas and a plan that are correct at the
+end and frozen throughout look perfect in the final row. Two of them, one after the other —
+progress written only on graph snapshots stalled for the whole of every subagent, and then a
+`dirty` gate meant to spare the database a write per tick stopped the plan updating at all
+while the tool trail kept moving.
+
+So the read-only run is now **watched while it runs**: `executeRun` is started without being
+awaited and the row polled beside it. Two assertions come out of that, and they are the ones
+this whole section is for:
+
+- the row reaches at least three distinct states, or "live" is a spinner;
+- **at least one card exists before the final step**, because a card that only appears once
+  the answer is written is a receipt, not a canvas.
+
+One more test lesson, from a failure that was not a bug: an assertion demanding the run had
+used `calculate` failed a correct run. `listTables` reports each table's row count, so "how
+many customers" needs no arithmetic — one run summed 24 monthly buckets, another read the
+count directly, and both were right. Asserting a route the model is free to choose is a
+flaky test dressed as a safety property. It now asserts the checkable thing instead: any
+arithmetic that *does* happen is recorded with its answer.

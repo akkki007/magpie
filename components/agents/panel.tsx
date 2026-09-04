@@ -73,7 +73,6 @@ export function Panel({
             todos={run.plan}
             steps={run.steps}
             running={run.status === "RUNNING"}
-            activity={run.activity}
           />
 
           {run.status === "WAITING" && run.pending.length > 0 && (
