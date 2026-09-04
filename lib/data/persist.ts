@@ -1,4 +1,5 @@
 import type { PrismaClient } from "@/lib/generated/prisma/client";
+import { TX_BUDGET } from "@/lib/tx-budget";
 
 import type { Cell, Field, SelectOption, Table, TableSummary } from "./types";
 import type { SeedField, SeedRecord } from "../../prisma/database-data";
@@ -107,7 +108,13 @@ export async function writeTable(db: PrismaClient, fixture: Fixture): Promise<st
     });
 
     return table.id;
-  });
+  },
+  /**
+   * A delete, a create, one `create` per field — each needing its generated id back, so they
+   * cannot be batched — and a bulk insert of every record. Comfortably more than Prisma's 5s
+   * default once the database is not on this machine; see `TX_BUDGET`.
+   */
+  TX_BUDGET);
 }
 
 const TONES = ["blue", "sky", "amber", "rose", "graphite"] as const;

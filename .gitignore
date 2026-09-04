@@ -55,3 +55,21 @@ __pycache__/
 # already, then removed with `git rm --cached`. Ignored as a pattern so the next
 # recording does not repeat it.
 *.mp4
+
+# Planning docs and design spec. Untracked deliberately — they are working notes for
+# building Magpie, not part of what it ships. Source comments still cite them by path
+# (`docs/modelling-plan.md` §1.1 and friends); those are references for whoever has the
+# folder, not files a fresh clone will find.
+/docs/
+
+# Personal notes, not project material.
+/how-to-pitch.md
+
+# Vendored Supabase agent skills, pulled from supabase/agent-skills. Local tooling, and
+# somebody else's source to be re-fetched rather than committed here. Note the paths name
+# these two specifically: design-from-references and teach are ours and stay tracked.
+/skills-lock.json
+/.agents/skills/supabase/
+/.agents/skills/supabase-postgres-best-practices/
+/.claude/skills/supabase
+/.claude/skills/supabase-postgres-best-practices

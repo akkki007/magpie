@@ -1,4 +1,5 @@
 import type { Prisma, PrismaClient } from "@/lib/generated/prisma/client";
+import { TX_BUDGET } from "@/lib/tx-budget";
 
 import { OverrideSchema } from "./scenario";
 
@@ -211,22 +212,34 @@ export async function writeModel(db: PrismaClient, model: Model, slug: string): 
       flatten(variable.formula, variable.id, null, 0, flat);
       nodes.push(...flat.map((node) => ({ ...node, variableId: variable.id }) as FlatNode & { variableId: string }));
     }
-    for (const node of nodes as (FlatNode & { variableId: string })[]) {
-      await tx.formulaNode.create({
-        data: {
-          id: node.id,
-          variableId: node.variableId,
-          parentId: node.parentId,
-          type: node.type,
-          op: node.op,
-          literal: node.literal,
-          refVariableId: node.refVariableId,
-          refMember: node.refMember,
-          fn: node.fn,
-          order: node.order,
-        },
-      });
-    }
+    /**
+     * One statement, not one per node.
+     *
+     * This was a `create()` per row, which is fine against a Postgres on localhost — a few
+     * hundred round trips at 0.1ms each disappear. Against a managed database in another
+     * region it is fatal: at ~200ms per round trip the loop alone blew the interactive
+     * transaction's 5s budget and the seed died with P2028 partway through, leaving nothing
+     * written.
+     *
+     * `createMany` is safe here despite `parentId` being a self-referencing foreign key,
+     * for two reasons that both have to hold: `flatten` is pre-order, so a parent is always
+     * earlier in the array than its children, and Postgres checks a non-deferrable FK at the
+     * end of the *statement* rather than per row. One statement, one round trip.
+     */
+    await tx.formulaNode.createMany({
+      data: (nodes as (FlatNode & { variableId: string })[]).map((node) => ({
+        id: node.id,
+        variableId: node.variableId,
+        parentId: node.parentId,
+        type: node.type,
+        op: node.op,
+        literal: node.literal,
+        refVariableId: node.refVariableId,
+        refMember: node.refMember,
+        fn: node.fn,
+        order: node.order,
+      })),
+    });
 
     const inputRows: { variableId: string; dimensionKey: string; period: Date; value: number }[] = [];
     for (const [variableId, byMember] of Object.entries(model.inputs)) {
@@ -261,7 +274,13 @@ export async function writeModel(db: PrismaClient, model: Model, slug: string): 
     }
 
     return created.id;
-  });
+  },
+  /**
+   * The batching above removes most of the round trips; `TX_BUDGET` covers the ones that
+   * remain — an `upsert` per dimension, a `create` per scenario, and the input rows in
+   * pages of 1000 — so the deadline does not depend on where the database happens to live.
+   */
+  TX_BUDGET);
 }
 
 /* ── Reading ──────────────────────────────────────────────────────────────*/

@@ -4,6 +4,7 @@ import { z } from "zod";
 
 import type { Prisma } from "@/lib/generated/prisma/client";
 import { db } from "@/lib/db";
+import { TX_BUDGET } from "@/lib/tx-budget";
 import {
   acceptProposal,
   commandsOf,
@@ -55,7 +56,18 @@ async function actor() {
   return { id: session.user.id, name: session.user.name || session.user.email };
 }
 
-/** Everything below needs the same three things; this is the one place they are fetched. */
+/**
+ * Everything below needs the same three things; this is the one place they are fetched.
+ *
+ * It is also the one place the transaction budget is set, which matters more than it looks.
+ * Every model action routes through here, and several of them loop: `persistCommands` takes
+ * up to 200 commands and spends two round trips on each (read the inverse, then apply — in
+ * that order, interleaved, because a command's before-state is what the previous one left
+ * behind), `acceptProposal` spends three, and `rollback` replays every command since a
+ * version. On localhost that is milliseconds. Against a database in another region, 200
+ * commands is well over a minute of round trips, and Prisma's 5s default would abort the
+ * transaction with `P2028` mid-batch — on a user's edit, not on a seed you can just re-run.
+ */
 async function withModel<T>(
   slug: string,
   run: (
@@ -72,7 +84,7 @@ async function withModel<T>(
       const model = await tx.model.findUnique({ where: { slug }, select: { id: true } });
       if (!model) return { ok: false, error: `No model at ${slug}.` };
       return run(tx, model.id, who);
-    });
+    }, TX_BUDGET);
   } catch (error) {
     console.error("[models/actions]", error);
     return {
