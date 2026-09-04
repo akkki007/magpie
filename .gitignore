@@ -48,8 +48,21 @@ __pycache__/
 # ...but the template for it is committed.
 !.env.example
 
-# generated reconciliation fixtures — deterministic, regenerate with `bun run recon:seed`
-/data
+# Generated reconciliation fixtures — deterministic, regenerate with `bun run recon:seed`.
+# The CSVs and truth.json stay out: 1.3MB of synthetic rows that any clone can rebuild.
+#
+# `eval-report.json` is the exception, and it is committed on purpose. /recon renders that
+# file, and a deployment has no shell to regenerate it in — so ignoring it meant the queue
+# was permanently empty in production while looking fine locally, telling the user to run a
+# command they cannot run. 31KB is a fair price for the screen existing.
+#
+# Written as three rules rather than `!/data/recon/eval-report.json` under `/data`, because
+# git never descends into an excluded directory: the parent has to stay listable for the
+# negation below to be reachable at all.
+/data/*
+!/data/recon/
+/data/recon/*
+!/data/recon/eval-report.json
 
 # demo recordings — oculon-product.mp4 is 22MB and was swept into a commit once
 # already, then removed with `git rm --cached`. Ignored as a pattern so the next

@@ -26,6 +26,27 @@ const nextConfig: NextConfig = {
    * Reproduced before and after by hiding `node_modules/ws`, which is the deploy's condition.
    */
   serverExternalPackages: ["langsmith"],
+
+  /**
+   * `data/recon/eval-report.json`, kept in the `/recon` function on purpose.
+   *
+   * `lib/recon/report.ts` reads that file with `readFileSync`, and the bundler traces
+   * `import`/`require` — not file reads. It happens to find this one anyway: the path is
+   * `join(dir, "eval-report.json")` with `dir` defaulting to a literal, and the tracer
+   * constant-folds far enough to see it. Verified by building without this entry, where the
+   * file still lands in `page.js.nft.json`.
+   *
+   * So this is insurance, not the fix. The inference holds only while the path stays
+   * statically knowable — the day anyone calls `readRunReport(someComputedDir)` it stops,
+   * silently, and the symptom is a production queue that is permanently empty while dev looks
+   * perfect. Naming the file costs two lines and does not depend on how clever the tracer is.
+   *
+   * The actual bug this was found through was simpler: `/data` was gitignored, so the file
+   * never reached the deployment at all and there was nothing to trace.
+   */
+  outputFileTracingIncludes: {
+    "/recon": ["./data/recon/eval-report.json"],
+  },
 };
 
 export default nextConfig;

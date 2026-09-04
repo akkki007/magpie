@@ -1,0 +1,1094 @@
+{
+  "generatedAt": "2026-09-04T17:09:32.727Z",
+  "batch": {
+    "dir": "data/recon",
+    "seed": 42,
+    "rowsIn": 11274,
+    "records": 11269,
+    "rejected": 5
+  },
+  "tolerances": {
+    "settlement": {
+      "delayDays": 2,
+      "skipWeekends": true
+    },
+    "bank": {
+      "onTimeDays": 1,
+      "lateDays": 7,
+      "splitSpanDays": 3
+    },
+    "amount": {
+      "roundingPaise": 5,
+      "tdsPercentOfGross": 1
+    },
+    "reference": {
+      "maxEditDistance": 2,
+      "minLength": 8
+    },
+    "escalation": {
+      "slackPaise": 10,
+      "maxCandidates": 5
+    },
+    "search": {
+      "maxNodes": 200000,
+      "maxSubsetSize": 3,
+      "maxCombinatorialSize": 4
+    },
+    "autoApply": 0.85
+  },
+  "timing": {
+    "ingestMs": 79.693332,
+    "matchMs": 20.209346999999994,
+    "totalMs": 99.90267899999999,
+    "recordsPerSecond": 112799.77787182265
+  },
+  "cost": {
+    "llmCalls": 0,
+    "promptTokens": 0,
+    "completionTokens": 0,
+    "rupeesPerThousandRecords": 0
+  },
+  "arm": "rules only",
+  "headline": {
+    "precision": 1,
+    "escalatedWithCorrectTopCandidate": 6,
+    "falseMatchRate": 0,
+    "matchRate": 0.9858823529411764,
+    "coverage": 1,
+    "exceptionRecall": 1,
+    "escalationRate": 0.08114035087719298
+  },
+  "tiers": {
+    "T0": 396,
+    "T1": 29,
+    "T2": 15,
+    "T3": 0,
+    "T4": 16
+  },
+  "rules": [
+    {
+      "rule": "T0_JOURNAL_REFERENCE",
+      "tier": "T0",
+      "outcome": "AUTO_MATCHED",
+      "count": 140
+    },
+    {
+      "rule": "T0_RECON_REPORT",
+      "tier": "T0",
+      "outcome": "AUTO_MATCHED",
+      "count": 139
+    },
+    {
+      "rule": "T0_REFERENCE_AND_AMOUNT",
+      "tier": "T0",
+      "outcome": "AUTO_MATCHED",
+      "count": 102
+    },
+    {
+      "rule": "T0_STANDALONE_DEBIT",
+      "tier": "T0",
+      "outcome": "EXCEPTION",
+      "count": 13
+    },
+    {
+      "rule": "T0_DUPLICATE_STATEMENT_ROW",
+      "tier": "T0",
+      "outcome": "EXCEPTION",
+      "count": 2
+    },
+    {
+      "rule": "T1_LATE_CREDIT",
+      "tier": "T1",
+      "outcome": "AUTO_MATCHED",
+      "count": 7
+    },
+    {
+      "rule": "T1_AMOUNT_AND_DATE",
+      "tier": "T1",
+      "outcome": "AUTO_MATCHED",
+      "count": 6
+    },
+    {
+      "rule": "T1_NARRATION_REFERENCE",
+      "tier": "T1",
+      "outcome": "AUTO_MATCHED",
+      "count": 4
+    },
+    {
+      "rule": "T1_REFERENCE_NEAR_MISS",
+      "tier": "T1",
+      "outcome": "AUTO_MATCHED",
+      "count": 4
+    },
+    {
+      "rule": "T1_ROUNDING",
+      "tier": "T1",
+      "outcome": "AUTO_MATCHED",
+      "count": 4
+    },
+    {
+      "rule": "T1_TDS_WITHHELD",
+      "tier": "T1",
+      "outcome": "AUTO_MATCHED",
+      "count": 4
+    },
+    {
+      "rule": "T2_ESCALATION_CANDIDATES",
+      "tier": "T2",
+      "outcome": "PROPOSED",
+      "count": 6
+    },
+    {
+      "rule": "T2_SPLIT_CREDIT",
+      "tier": "T2",
+      "outcome": "AUTO_MATCHED",
+      "count": 4
+    },
+    {
+      "rule": "T2_COMBINED_CREDIT",
+      "tier": "T2",
+      "outcome": "AUTO_MATCHED",
+      "count": 3
+    },
+    {
+      "rule": "T2_RECON_BY_ELIMINATION",
+      "tier": "T2",
+      "outcome": "AUTO_MATCHED",
+      "count": 2
+    },
+    {
+      "rule": "T4_FEE_NOT_EXPENSED",
+      "tier": "T4",
+      "outcome": "EXCEPTION",
+      "count": 4
+    },
+    {
+      "rule": "T4_RECON_VALUE_DOES_NOT_TIE",
+      "tier": "T4",
+      "outcome": "EXCEPTION",
+      "count": 4
+    },
+    {
+      "rule": "T4_NOT_POSTED",
+      "tier": "T4",
+      "outcome": "EXCEPTION",
+      "count": 3
+    },
+    {
+      "rule": "T4_UNEXPLAINED_CREDIT",
+      "tier": "T4",
+      "outcome": "EXCEPTION",
+      "count": 3
+    },
+    {
+      "rule": "T4_NOT_ITEMISED",
+      "tier": "T4",
+      "outcome": "EXCEPTION",
+      "count": 2
+    }
+  ],
+  "lanes": [
+    {
+      "lane": "PAYMENT_TO_SETTLEMENT",
+      "truthMatches": 141,
+      "truthExceptions": 6,
+      "produced": {
+        "AUTO_MATCHED": 141,
+        "PROPOSED": 0,
+        "EXCEPTION": 6
+      },
+      "autoCorrect": 141,
+      "proposedCorrect": 0,
+      "exceptionCorrect": 6,
+      "escalated": 0,
+      "missed": 0,
+      "falseMatches": 0,
+      "precision": 1,
+      "matchRate": 1,
+      "coverage": 1,
+      "exceptionRecall": 1,
+      "falseMatchRate": 0,
+      "classCorrect": 8,
+      "classWrong": []
+    },
+    {
+      "lane": "SETTLEMENT_TO_BANK",
+      "truthMatches": 144,
+      "truthExceptions": 18,
+      "produced": {
+        "AUTO_MATCHED": 138,
+        "PROPOSED": 6,
+        "EXCEPTION": 18
+      },
+      "autoCorrect": 138,
+      "proposedCorrect": 6,
+      "exceptionCorrect": 18,
+      "escalated": 0,
+      "missed": 0,
+      "falseMatches": 0,
+      "precision": 1,
+      "matchRate": 0.9583333333333334,
+      "coverage": 1,
+      "exceptionRecall": 1,
+      "falseMatchRate": 0,
+      "classCorrect": 58,
+      "classWrong": [
+        {
+          "expected": "DISGUISED_COUNTERPARTY",
+          "said": null,
+          "rule": "T2_ESCALATION_CANDIDATES"
+        },
+        {
+          "expected": "DISGUISED_COUNTERPARTY",
+          "said": null,
+          "rule": "T2_ESCALATION_CANDIDATES"
+        },
+        {
+          "expected": "DISGUISED_COUNTERPARTY",
+          "said": null,
+          "rule": "T2_ESCALATION_CANDIDATES"
+        },
+        {
+          "expected": "NARRATED_PAYOUT",
+          "said": null,
+          "rule": "T2_ESCALATION_CANDIDATES"
+        },
+        {
+          "expected": "NARRATED_PAYOUT",
+          "said": null,
+          "rule": "T2_ESCALATION_CANDIDATES"
+        },
+        {
+          "expected": "NARRATED_PAYOUT",
+          "said": null,
+          "rule": "T2_ESCALATION_CANDIDATES"
+        }
+      ]
+    },
+    {
+      "lane": "SETTLEMENT_TO_LEDGER",
+      "truthMatches": 140,
+      "truthExceptions": 7,
+      "produced": {
+        "AUTO_MATCHED": 140,
+        "PROPOSED": 0,
+        "EXCEPTION": 7
+      },
+      "autoCorrect": 140,
+      "proposedCorrect": 0,
+      "exceptionCorrect": 7,
+      "escalated": 0,
+      "missed": 0,
+      "falseMatches": 0,
+      "precision": 1,
+      "matchRate": 1,
+      "coverage": 1,
+      "exceptionRecall": 1,
+      "falseMatchRate": 0,
+      "classCorrect": 7,
+      "classWrong": []
+    }
+  ],
+  "classes": [
+    {
+      "failure": "CHARGEBACK_DEDUCTION",
+      "planted": 13,
+      "resolved": 13,
+      "labelled": 13
+    },
+    {
+      "failure": "TIMING_T_PLUS_N",
+      "planted": 7,
+      "resolved": 7,
+      "labelled": 7
+    },
+    {
+      "failure": "MISSING_UTR",
+      "planted": 6,
+      "resolved": 6,
+      "labelled": 6
+    },
+    {
+      "failure": "FEE_NOT_BOOKED",
+      "planted": 4,
+      "resolved": 4,
+      "labelled": 4
+    },
+    {
+      "failure": "MISATTRIBUTED_PAYMENT",
+      "planted": 4,
+      "resolved": 4,
+      "labelled": 4
+    },
+    {
+      "failure": "MISSING_RECON_ROW",
+      "planted": 4,
+      "resolved": 4,
+      "labelled": 4
+    },
+    {
+      "failure": "REFUND_NETTED",
+      "planted": 4,
+      "resolved": 4,
+      "labelled": 4
+    },
+    {
+      "failure": "ROUNDING_PAISE",
+      "planted": 4,
+      "resolved": 4,
+      "labelled": 4
+    },
+    {
+      "failure": "SPLIT_SETTLEMENT",
+      "planted": 4,
+      "resolved": 4,
+      "labelled": 4
+    },
+    {
+      "failure": "TDS_WITHHELD",
+      "planted": 4,
+      "resolved": 4,
+      "labelled": 4
+    },
+    {
+      "failure": "TYPO_UTR",
+      "planted": 4,
+      "resolved": 4,
+      "labelled": 4
+    },
+    {
+      "failure": "UTR_IN_NARRATION",
+      "planted": 4,
+      "resolved": 4,
+      "labelled": 4
+    },
+    {
+      "failure": "COMBINED_CREDIT",
+      "planted": 3,
+      "resolved": 3,
+      "labelled": 3
+    },
+    {
+      "failure": "DISGUISED_COUNTERPARTY",
+      "planted": 3,
+      "resolved": 3,
+      "labelled": 0
+    },
+    {
+      "failure": "FOREIGN_CREDIT",
+      "planted": 3,
+      "resolved": 3,
+      "labelled": 3
+    },
+    {
+      "failure": "MISSING_LEDGER_ENTRY",
+      "planted": 3,
+      "resolved": 3,
+      "labelled": 3
+    },
+    {
+      "failure": "NARRATED_PAYOUT",
+      "planted": 3,
+      "resolved": 3,
+      "labelled": 0
+    },
+    {
+      "failure": "DUPLICATE_CREDIT",
+      "planted": 2,
+      "resolved": 2,
+      "labelled": 2
+    }
+  ],
+  "confusion": [
+    {
+      "expected": "MATCH",
+      "auto": 419,
+      "proposed": 6,
+      "exception": 0,
+      "silent": 0
+    },
+    {
+      "expected": "EXCEPTION",
+      "auto": 0,
+      "proposed": 0,
+      "exception": 31,
+      "silent": 0
+    },
+    {
+      "expected": "NOT IN KEY",
+      "auto": 0,
+      "proposed": 0,
+      "exception": 0,
+      "silent": 0
+    }
+  ],
+  "falseMatches": [],
+  "ablation": null,
+  "queue": [
+    {
+      "lane": "PAYMENT_TO_SETTLEMENT",
+      "outcome": "EXCEPTION",
+      "rule": "T4_RECON_VALUE_DOES_NOT_TIE",
+      "class": "MISATTRIBUTED_PAYMENT",
+      "amount": 117857357,
+      "left": [],
+      "right": [
+        "setl_tt6dw9rq"
+      ],
+      "evidence": [
+        "the recon report itemises exactly the 40 payments this payout claims, and they total ₹11,52,942.32 against a reported gross of ₹11,78,573.57 — short by ₹25,631.25",
+        "the count is right and the value is not, so a payment has been itemised against the wrong payout",
+        "every payment listed exists and settles on 2026-06-03, so nothing here is missing — only misfiled"
+      ]
+    },
+    {
+      "lane": "SETTLEMENT_TO_BANK",
+      "outcome": "PROPOSED",
+      "rule": "T2_ESCALATION_CANDIDATES",
+      "class": null,
+      "amount": 108647618,
+      "left": [
+        "setl_mhpg3mvr"
+      ],
+      "right": [
+        "bnk_cfqcbdrinx"
+      ],
+      "evidence": [
+        "₹10,86,476.18 credited 2026-07-20 with no usable reference: \"NEFT CR R P SOFTWARE PVT LTD PAYOUT\"",
+        "1 unmatched settlement(s) are within 10 paise and 7 days:",
+        "  setl_mhpg3mvr — net ₹10,86,476.14 (over by ₹0.04), settled 2026-07-20 (same day), UTR RZPX64857746282",
+        "no rule can settle this safely: matching on an amount a few paise out with nothing to identify it is how a silent false match gets made, so this is ranked and left for judgement"
+      ]
+    },
+    {
+      "lane": "PAYMENT_TO_SETTLEMENT",
+      "outcome": "EXCEPTION",
+      "rule": "T4_NOT_ITEMISED",
+      "class": "MISSING_RECON_ROW",
+      "amount": 96522486,
+      "left": [],
+      "right": [
+        "setl_5dv8nwsd"
+      ],
+      "evidence": [
+        "the recon report has no rows for this payout, and 1 other payout(s) on 2026-07-15 are missing from it too",
+        "the remainder ties out: 80 payments worth ₹14,76,799.99 are due for payout on 2026-07-15 and unplaced by the report, against 80 worth ₹14,76,799.99 claimed",
+        "splitting 80 unplaced payments across 2 payouts of 40 and 40 is not derivable from these sources — the report is the only document that says which is which",
+        "the money is accounted for; the attribution is not. Ask for a complete recon report."
+      ]
+    },
+    {
+      "lane": "SETTLEMENT_TO_LEDGER",
+      "outcome": "EXCEPTION",
+      "rule": "T4_NOT_POSTED",
+      "class": "MISSING_LEDGER_ENTRY",
+      "amount": 94896130,
+      "left": [
+        "setl_yqlk8nui"
+      ],
+      "right": [],
+      "evidence": [
+        "settled 2026-06-22 for ₹9,48,961.30 with no journal referencing it",
+        "nothing in the books moves ₹9,69,029.62 out of Razorpay Clearing, so the clearing account is overstated by that much"
+      ]
+    },
+    {
+      "lane": "SETTLEMENT_TO_LEDGER",
+      "outcome": "EXCEPTION",
+      "rule": "T4_FEE_NOT_EXPENSED",
+      "class": "FEE_NOT_BOOKED",
+      "amount": 94500269,
+      "left": [
+        "setl_1tzay5jl"
+      ],
+      "right": [
+        "jrnl_sig3796g"
+      ],
+      "evidence": [
+        "journal jrnl_sig3796g debits Bank ₹9,55,671.65, which is the gross payout, not the net ₹9,45,002.69",
+        "no Payment Gateway Fees or GST Input line exists, so ₹10,668.96 of cost was never expensed",
+        "the journal balances, which is why nothing else catches this: profit is overstated by ₹9,041.48 and input credit of ₹1,627.48 is unclaimed"
+      ]
+    },
+    {
+      "lane": "SETTLEMENT_TO_BANK",
+      "outcome": "PROPOSED",
+      "rule": "T2_ESCALATION_CANDIDATES",
+      "class": null,
+      "amount": 82356125,
+      "left": [
+        "setl_jfu20irg"
+      ],
+      "right": [
+        "bnk_yp9u1rt3vs"
+      ],
+      "evidence": [
+        "₹8,23,561.25 credited 2026-07-27 with no usable reference: \"NEFT INWARD RAZORPAY PAYOUT FOR 40 TXNS DATED 27JUL26\"",
+        "1 unmatched settlement(s) are within 10 paise and 7 days:",
+        "  setl_jfu20irg — net ₹8,23,561.24 (over by ₹0.01), settled 2026-07-27 (same day), UTR RZPX14625611197",
+        "no rule can settle this safely: matching on an amount a few paise out with nothing to identify it is how a silent false match gets made, so this is ranked and left for judgement"
+      ]
+    },
+    {
+      "lane": "SETTLEMENT_TO_BANK",
+      "outcome": "PROPOSED",
+      "rule": "T2_ESCALATION_CANDIDATES",
+      "class": null,
+      "amount": 74861218,
+      "left": [
+        "setl_7xj5vbfg"
+      ],
+      "right": [
+        "bnk_jas72m5905"
+      ],
+      "evidence": [
+        "₹7,48,612.18 credited 2026-07-01 with no usable reference: \"IMPS INWARD RAZOR PAY SW PVT LTD\"",
+        "1 unmatched settlement(s) are within 10 paise and 7 days:",
+        "  setl_7xj5vbfg — net ₹7,48,612.16 (over by ₹0.02), settled 2026-07-01 (same day), UTR RZPX77315050686",
+        "no rule can settle this safely: matching on an amount a few paise out with nothing to identify it is how a silent false match gets made, so this is ranked and left for judgement"
+      ]
+    },
+    {
+      "lane": "PAYMENT_TO_SETTLEMENT",
+      "outcome": "EXCEPTION",
+      "rule": "T4_RECON_VALUE_DOES_NOT_TIE",
+      "class": "MISATTRIBUTED_PAYMENT",
+      "amount": 69144593,
+      "left": [],
+      "right": [
+        "setl_eq1q91bo"
+      ],
+      "evidence": [
+        "the recon report itemises exactly the 40 payments this payout claims, and they total ₹7,17,077.18 against a reported gross of ₹6,91,445.93 — over by ₹25,631.25",
+        "the count is right and the value is not, so a payment has been itemised against the wrong payout",
+        "every payment listed exists and settles on 2026-06-03, so nothing here is missing — only misfiled"
+      ]
+    },
+    {
+      "lane": "SETTLEMENT_TO_BANK",
+      "outcome": "PROPOSED",
+      "rule": "T2_ESCALATION_CANDIDATES",
+      "class": null,
+      "amount": 56281969,
+      "left": [
+        "setl_q1sytvyw"
+      ],
+      "right": [
+        "bnk_0nll31bv9k"
+      ],
+      "evidence": [
+        "₹5,62,819.69 credited 2026-06-10 with no usable reference: \"NEFT INWARD RZPSPL SETTLEMENT INR\"",
+        "1 unmatched settlement(s) are within 10 paise and 7 days:",
+        "  setl_q1sytvyw — net ₹5,62,819.66 (over by ₹0.03), settled 2026-06-10 (same day), UTR RZPX66946261996",
+        "no rule can settle this safely: matching on an amount a few paise out with nothing to identify it is how a silent false match gets made, so this is ranked and left for judgement"
+      ]
+    },
+    {
+      "lane": "PAYMENT_TO_SETTLEMENT",
+      "outcome": "EXCEPTION",
+      "rule": "T4_NOT_ITEMISED",
+      "class": "MISSING_RECON_ROW",
+      "amount": 51157513,
+      "left": [],
+      "right": [
+        "setl_on4ik9j7"
+      ],
+      "evidence": [
+        "the recon report has no rows for this payout, and 1 other payout(s) on 2026-07-15 are missing from it too",
+        "the remainder ties out: 80 payments worth ₹14,76,799.99 are due for payout on 2026-07-15 and unplaced by the report, against 80 worth ₹14,76,799.99 claimed",
+        "splitting 80 unplaced payments across 2 payouts of 40 and 40 is not derivable from these sources — the report is the only document that says which is which",
+        "the money is accounted for; the attribution is not. Ask for a complete recon report."
+      ]
+    },
+    {
+      "lane": "PAYMENT_TO_SETTLEMENT",
+      "outcome": "EXCEPTION",
+      "rule": "T4_RECON_VALUE_DOES_NOT_TIE",
+      "class": "MISATTRIBUTED_PAYMENT",
+      "amount": 40676858,
+      "left": [],
+      "right": [
+        "setl_82fh40t4"
+      ],
+      "evidence": [
+        "the recon report itemises exactly the 40 payments this payout claims, and they total ₹4,04,089.58 against a reported gross of ₹4,06,768.58 — short by ₹2,679.00",
+        "the count is right and the value is not, so a payment has been itemised against the wrong payout",
+        "every payment listed exists and settles on 2026-06-05, so nothing here is missing — only misfiled"
+      ]
+    },
+    {
+      "lane": "SETTLEMENT_TO_LEDGER",
+      "outcome": "EXCEPTION",
+      "rule": "T4_FEE_NOT_EXPENSED",
+      "class": "FEE_NOT_BOOKED",
+      "amount": 40228358,
+      "left": [
+        "setl_fivehu9p"
+      ],
+      "right": [
+        "jrnl_e2y5pya5"
+      ],
+      "evidence": [
+        "journal jrnl_e2y5pya5 debits Bank ₹4,09,171.44, which is the gross payout, not the net ₹4,02,283.58",
+        "no Payment Gateway Fees or GST Input line exists, so ₹6,887.86 of cost was never expensed",
+        "the journal balances, which is why nothing else catches this: profit is overstated by ₹5,837.16 and input credit of ₹1,050.70 is unclaimed"
+      ]
+    },
+    {
+      "lane": "SETTLEMENT_TO_BANK",
+      "outcome": "EXCEPTION",
+      "rule": "T0_DUPLICATE_STATEMENT_ROW",
+      "class": "DUPLICATE_CREDIT",
+      "amount": 39895895,
+      "left": [],
+      "right": [
+        "bnk_mct7zcyyqz"
+      ],
+      "evidence": [
+        "identical to bnk_7aqsgijbtd in reference, amount, value date and narration — the statement was ingested twice",
+        "₹3,98,958.95 on 2026-07-17",
+        "the pair is indistinguishable; kept the lower id (bnk_7aqsgijbtd) by convention"
+      ]
+    },
+    {
+      "lane": "SETTLEMENT_TO_LEDGER",
+      "outcome": "EXCEPTION",
+      "rule": "T4_NOT_POSTED",
+      "class": "MISSING_LEDGER_ENTRY",
+      "amount": 37451160,
+      "left": [
+        "setl_3mz4fa8w"
+      ],
+      "right": [],
+      "evidence": [
+        "settled 2026-07-27 for ₹3,74,511.60 with no journal referencing it",
+        "nothing in the books moves ₹3,81,814.27 out of Razorpay Clearing, so the clearing account is overstated by that much"
+      ]
+    },
+    {
+      "lane": "SETTLEMENT_TO_BANK",
+      "outcome": "EXCEPTION",
+      "rule": "T4_UNEXPLAINED_CREDIT",
+      "class": "FOREIGN_CREDIT",
+      "amount": 36764500,
+      "left": [],
+      "right": [
+        "bnk_9xjd2uhe9c"
+      ],
+      "evidence": [
+        "₹3,67,645.00 credited 2026-06-25 with no settlement to explain it",
+        "narration is a different counterparty entirely: NEFT INWARD, INTEREST CREDIT",
+        "reference NEFT537203"
+      ]
+    },
+    {
+      "lane": "PAYMENT_TO_SETTLEMENT",
+      "outcome": "EXCEPTION",
+      "rule": "T4_RECON_VALUE_DOES_NOT_TIE",
+      "class": "MISATTRIBUTED_PAYMENT",
+      "amount": 36490407,
+      "left": [],
+      "right": [
+        "setl_fjxqoj5h"
+      ],
+      "evidence": [
+        "the recon report itemises exactly the 40 payments this payout claims, and they total ₹3,67,583.07 against a reported gross of ₹3,64,904.07 — over by ₹2,679.00",
+        "the count is right and the value is not, so a payment has been itemised against the wrong payout",
+        "every payment listed exists and settles on 2026-06-05, so nothing here is missing — only misfiled"
+      ]
+    },
+    {
+      "lane": "SETTLEMENT_TO_LEDGER",
+      "outcome": "EXCEPTION",
+      "rule": "T4_NOT_POSTED",
+      "class": "MISSING_LEDGER_ENTRY",
+      "amount": 34257470,
+      "left": [
+        "setl_xqklet0i"
+      ],
+      "right": [],
+      "evidence": [
+        "settled 2026-06-15 for ₹3,42,574.70 with no journal referencing it",
+        "nothing in the books moves ₹3,48,232.28 out of Razorpay Clearing, so the clearing account is overstated by that much"
+      ]
+    },
+    {
+      "lane": "SETTLEMENT_TO_BANK",
+      "outcome": "PROPOSED",
+      "rule": "T2_ESCALATION_CANDIDATES",
+      "class": null,
+      "amount": 32770979,
+      "left": [
+        "setl_zawnofos"
+      ],
+      "right": [
+        "bnk_mjpr258hah"
+      ],
+      "evidence": [
+        "₹3,27,709.79 credited 2026-07-06 with no usable reference: \"NEFT CR RAZORPAY SETTLEMENT OF FORTY TRANSACTIONS 06 JUL\"",
+        "1 unmatched settlement(s) are within 10 paise and 7 days:",
+        "  setl_zawnofos — net ₹3,27,709.78 (over by ₹0.01), settled 2026-07-06 (same day), UTR RZPX39426298554",
+        "no rule can settle this safely: matching on an amount a few paise out with nothing to identify it is how a silent false match gets made, so this is ranked and left for judgement"
+      ]
+    },
+    {
+      "lane": "SETTLEMENT_TO_LEDGER",
+      "outcome": "EXCEPTION",
+      "rule": "T4_FEE_NOT_EXPENSED",
+      "class": "FEE_NOT_BOOKED",
+      "amount": 32646732,
+      "left": [
+        "setl_2b8nfq4k"
+      ],
+      "right": [
+        "jrnl_uhwgblul"
+      ],
+      "evidence": [
+        "journal jrnl_uhwgblul debits Bank ₹3,30,474.69, which is the gross payout, not the net ₹3,26,467.32",
+        "no Payment Gateway Fees or GST Input line exists, so ₹4,007.37 of cost was never expensed",
+        "the journal balances, which is why nothing else catches this: profit is overstated by ₹3,396.06 and input credit of ₹611.31 is unclaimed"
+      ]
+    },
+    {
+      "lane": "SETTLEMENT_TO_BANK",
+      "outcome": "PROPOSED",
+      "rule": "T2_ESCALATION_CANDIDATES",
+      "class": null,
+      "amount": 23080370,
+      "left": [
+        "setl_o3uzkrc6"
+      ],
+      "right": [
+        "bnk_0dfp6oyam0"
+      ],
+      "evidence": [
+        "₹2,30,803.70 credited 2026-07-24 with no usable reference: \"IMPS RAZORPAY PAYOUT AGAINST 40 CAPTURES ON 24-07-2026\"",
+        "1 unmatched settlement(s) are within 10 paise and 7 days:",
+        "  setl_o3uzkrc6 — net ₹2,30,803.67 (over by ₹0.03), settled 2026-07-24 (same day), UTR RZPX39799032587",
+        "no rule can settle this safely: matching on an amount a few paise out with nothing to identify it is how a silent false match gets made, so this is ranked and left for judgement"
+      ]
+    },
+    {
+      "lane": "SETTLEMENT_TO_BANK",
+      "outcome": "EXCEPTION",
+      "rule": "T4_UNEXPLAINED_CREDIT",
+      "class": "FOREIGN_CREDIT",
+      "amount": 21333000,
+      "left": [],
+      "right": [
+        "bnk_qs286ee8yf"
+      ],
+      "evidence": [
+        "₹2,13,330.00 credited 2026-06-08 with no settlement to explain it",
+        "narration is a different counterparty entirely: NEFT INWARD, ACME LOGISTICS PVT LTD",
+        "reference NEFT281114"
+      ]
+    },
+    {
+      "lane": "SETTLEMENT_TO_BANK",
+      "outcome": "EXCEPTION",
+      "rule": "T0_DUPLICATE_STATEMENT_ROW",
+      "class": "DUPLICATE_CREDIT",
+      "amount": 20182030,
+      "left": [],
+      "right": [
+        "bnk_ujxpqacw0d"
+      ],
+      "evidence": [
+        "identical to bnk_3uko29pbmy in reference, amount, value date and narration — the statement was ingested twice",
+        "₹2,01,820.30 on 2026-07-08",
+        "the pair is indistinguishable; kept the lower id (bnk_3uko29pbmy) by convention"
+      ]
+    },
+    {
+      "lane": "SETTLEMENT_TO_LEDGER",
+      "outcome": "EXCEPTION",
+      "rule": "T4_FEE_NOT_EXPENSED",
+      "class": "FEE_NOT_BOOKED",
+      "amount": 17042862,
+      "left": [
+        "setl_x3rpn2sv"
+      ],
+      "right": [
+        "jrnl_pncku6gh"
+      ],
+      "evidence": [
+        "journal jrnl_pncku6gh debits Bank ₹1,80,971.79, which is the gross payout, not the net ₹1,70,428.62",
+        "no Payment Gateway Fees or GST Input line exists, so ₹10,543.17 of cost was never expensed",
+        "the journal balances, which is why nothing else catches this: profit is overstated by ₹8,934.89 and input credit of ₹1,608.28 is unclaimed"
+      ]
+    },
+    {
+      "lane": "SETTLEMENT_TO_BANK",
+      "outcome": "EXCEPTION",
+      "rule": "T4_UNEXPLAINED_CREDIT",
+      "class": "FOREIGN_CREDIT",
+      "amount": 13898000,
+      "left": [],
+      "right": [
+        "bnk_ed1n5x1l41"
+      ],
+      "evidence": [
+        "₹1,38,980.00 credited 2026-06-29 with no settlement to explain it",
+        "narration is a different counterparty entirely: NEFT INWARD, STRIPE PAYMENTS INDIA",
+        "reference NEFT371604"
+      ]
+    },
+    {
+      "lane": "SETTLEMENT_TO_BANK",
+      "outcome": "EXCEPTION",
+      "rule": "T0_STANDALONE_DEBIT",
+      "class": "CHARGEBACK_DEDUCTION",
+      "amount": -8434400,
+      "left": [],
+      "right": [
+        "bnk_vo707851ni"
+      ],
+      "evidence": [
+        "₹84,344.00 debited on 2026-07-28, and no unmatched settlement was paid out as a debit of that value",
+        "narration names dispute disp_mwpu45phfb, raised 2026-07-28 for ₹84,344.00 — the amount ties exactly"
+      ]
+    },
+    {
+      "lane": "SETTLEMENT_TO_BANK",
+      "outcome": "EXCEPTION",
+      "rule": "T0_STANDALONE_DEBIT",
+      "class": "CHARGEBACK_DEDUCTION",
+      "amount": -7933500,
+      "left": [],
+      "right": [
+        "bnk_gqe9yj6r83"
+      ],
+      "evidence": [
+        "₹79,335.00 debited on 2026-08-02, and no unmatched settlement was paid out as a debit of that value",
+        "narration names dispute disp_q8gct1oyg4, raised 2026-08-02 for ₹79,335.00 — the amount ties exactly"
+      ]
+    },
+    {
+      "lane": "SETTLEMENT_TO_BANK",
+      "outcome": "EXCEPTION",
+      "rule": "T0_STANDALONE_DEBIT",
+      "class": "CHARGEBACK_DEDUCTION",
+      "amount": -5341100,
+      "left": [],
+      "right": [
+        "bnk_skwt9itg3u"
+      ],
+      "evidence": [
+        "₹53,411.00 debited on 2026-07-17, and no unmatched settlement was paid out as a debit of that value",
+        "narration names dispute disp_57d9283j3w, raised 2026-07-17 for ₹53,411.00 — the amount ties exactly"
+      ]
+    },
+    {
+      "lane": "SETTLEMENT_TO_BANK",
+      "outcome": "EXCEPTION",
+      "rule": "T0_STANDALONE_DEBIT",
+      "class": "CHARGEBACK_DEDUCTION",
+      "amount": -2781586,
+      "left": [],
+      "right": [
+        "bnk_9pd46hk7yj"
+      ],
+      "evidence": [
+        "₹27,815.86 debited on 2026-07-29, and no unmatched settlement was paid out as a debit of that value",
+        "narration names dispute disp_pz9eufrvt9, raised 2026-07-29 for ₹27,815.86 — the amount ties exactly"
+      ]
+    },
+    {
+      "lane": "SETTLEMENT_TO_BANK",
+      "outcome": "EXCEPTION",
+      "rule": "T0_STANDALONE_DEBIT",
+      "class": "CHARGEBACK_DEDUCTION",
+      "amount": -953635,
+      "left": [],
+      "right": [
+        "bnk_igo6jdof0h"
+      ],
+      "evidence": [
+        "₹9,536.35 debited on 2026-08-18, and no unmatched settlement was paid out as a debit of that value",
+        "narration names dispute disp_tlcbnj5jhz, raised 2026-08-18 for ₹9,536.35 — the amount ties exactly"
+      ]
+    },
+    {
+      "lane": "SETTLEMENT_TO_BANK",
+      "outcome": "EXCEPTION",
+      "rule": "T0_STANDALONE_DEBIT",
+      "class": "CHARGEBACK_DEDUCTION",
+      "amount": -585500,
+      "left": [],
+      "right": [
+        "bnk_i734jeu9tw"
+      ],
+      "evidence": [
+        "₹5,855.00 debited on 2026-06-22, and no unmatched settlement was paid out as a debit of that value",
+        "narration names dispute disp_az0dmhuo0g, raised 2026-06-22 for ₹5,855.00 — the amount ties exactly"
+      ]
+    },
+    {
+      "lane": "SETTLEMENT_TO_BANK",
+      "outcome": "EXCEPTION",
+      "rule": "T0_STANDALONE_DEBIT",
+      "class": "CHARGEBACK_DEDUCTION",
+      "amount": -87000,
+      "left": [],
+      "right": [
+        "bnk_gguogb3d3b"
+      ],
+      "evidence": [
+        "₹870.00 debited on 2026-07-24, and no unmatched settlement was paid out as a debit of that value",
+        "narration names dispute disp_2vmvmxo1rp, raised 2026-07-24 for ₹870.00 — the amount ties exactly"
+      ]
+    },
+    {
+      "lane": "SETTLEMENT_TO_BANK",
+      "outcome": "EXCEPTION",
+      "rule": "T0_STANDALONE_DEBIT",
+      "class": "CHARGEBACK_DEDUCTION",
+      "amount": -85800,
+      "left": [],
+      "right": [
+        "bnk_fu36i5bujg"
+      ],
+      "evidence": [
+        "₹858.00 debited on 2026-08-14, and no unmatched settlement was paid out as a debit of that value",
+        "narration names dispute disp_x07nh4eky0, raised 2026-08-14 for ₹858.00 — the amount ties exactly"
+      ]
+    },
+    {
+      "lane": "SETTLEMENT_TO_BANK",
+      "outcome": "EXCEPTION",
+      "rule": "T0_STANDALONE_DEBIT",
+      "class": "CHARGEBACK_DEDUCTION",
+      "amount": -76100,
+      "left": [],
+      "right": [
+        "bnk_mnh3n1irzq"
+      ],
+      "evidence": [
+        "₹761.00 debited on 2026-08-05, and no unmatched settlement was paid out as a debit of that value",
+        "narration names dispute disp_63zez3n10q, raised 2026-08-05 for ₹761.00 — the amount ties exactly"
+      ]
+    },
+    {
+      "lane": "SETTLEMENT_TO_BANK",
+      "outcome": "EXCEPTION",
+      "rule": "T0_STANDALONE_DEBIT",
+      "class": "CHARGEBACK_DEDUCTION",
+      "amount": -60590,
+      "left": [],
+      "right": [
+        "bnk_b7zzrbygr0"
+      ],
+      "evidence": [
+        "₹605.90 debited on 2026-07-28, and no unmatched settlement was paid out as a debit of that value",
+        "narration names dispute disp_9c6gw7zylm, raised 2026-07-28 for ₹605.90 — the amount ties exactly"
+      ]
+    },
+    {
+      "lane": "SETTLEMENT_TO_BANK",
+      "outcome": "EXCEPTION",
+      "rule": "T0_STANDALONE_DEBIT",
+      "class": "CHARGEBACK_DEDUCTION",
+      "amount": -58200,
+      "left": [],
+      "right": [
+        "bnk_y9ihcv8nf2"
+      ],
+      "evidence": [
+        "₹582.00 debited on 2026-06-20, and no unmatched settlement was paid out as a debit of that value",
+        "narration names dispute disp_8293d9u08p, raised 2026-06-20 for ₹582.00 — the amount ties exactly"
+      ]
+    },
+    {
+      "lane": "SETTLEMENT_TO_BANK",
+      "outcome": "EXCEPTION",
+      "rule": "T0_STANDALONE_DEBIT",
+      "class": "CHARGEBACK_DEDUCTION",
+      "amount": -36500,
+      "left": [],
+      "right": [
+        "bnk_moqxubd4fu"
+      ],
+      "evidence": [
+        "₹365.00 debited on 2026-06-13, and no unmatched settlement was paid out as a debit of that value",
+        "narration names dispute disp_pxo7nmj1ro, raised 2026-06-13 for ₹365.00 — the amount ties exactly"
+      ]
+    },
+    {
+      "lane": "SETTLEMENT_TO_BANK",
+      "outcome": "EXCEPTION",
+      "rule": "T0_STANDALONE_DEBIT",
+      "class": "CHARGEBACK_DEDUCTION",
+      "amount": -22100,
+      "left": [],
+      "right": [
+        "bnk_bmfwasv7wr"
+      ],
+      "evidence": [
+        "₹221.00 debited on 2026-07-05, and no unmatched settlement was paid out as a debit of that value",
+        "narration names dispute disp_khgxv0q2g2, raised 2026-07-05 for ₹221.00 — the amount ties exactly"
+      ]
+    }
+  ],
+  "cash": {
+    "periodKeys": [
+      "2026-06",
+      "2026-07",
+      "2026-08"
+    ],
+    "reconciled": [
+      3523222630,
+      3378675669,
+      230037006
+    ],
+    "inFlight": [
+      56281966,
+      321716299,
+      0
+    ],
+    "atRisk": [
+      554927216,
+      718380797,
+      26091897
+    ],
+    "entryPeriods": [
+      0,
+      1,
+      1,
+      0,
+      1,
+      1,
+      1,
+      0,
+      0,
+      1,
+      0,
+      1,
+      1,
+      1,
+      0,
+      0,
+      0,
+      1,
+      0,
+      1,
+      0,
+      1,
+      2,
+      0,
+      1,
+      2,
+      1,
+      1,
+      2,
+      0,
+      1,
+      2,
+      2,
+      1,
+      0,
+      0,
+      1
+    ]
+  }
+}
