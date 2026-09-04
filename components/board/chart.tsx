@@ -49,11 +49,14 @@ export function BoardChart({
   labels,
   series,
   format,
+  marks = [],
 }: {
   form: ChartForm;
   labels: string[];
   series: ResolvedSeries[];
   format: NumberFormat;
+  /** Period indices to flag as unusual (`docs/board-plan.md` feature 2). */
+  marks?: number[];
 }) {
   const [table, setTable] = useState(false);
 
@@ -73,7 +76,7 @@ export function BoardChart({
       {table ? (
         <DataTable labels={labels} series={series} format={format} />
       ) : (
-        <Plot form={form} labels={labels} series={series} format={format} />
+        <Plot form={form} labels={labels} series={series} format={format} marks={marks} />
       )}
 
       {/* A single series needs no legend — the title already names it. */}
@@ -102,11 +105,13 @@ function Plot({
   labels,
   series,
   format,
+  marks,
 }: {
   form: ChartForm;
   labels: string[];
   series: ResolvedSeries[];
   format: NumberFormat;
+  marks: number[];
 }) {
   const [hover, setHover] = useState<number | null>(null);
   const clipId = useId();
@@ -187,16 +192,49 @@ function Plot({
               )}
         </g>
 
-        {/* Axis labels, thinned. */}
+        {/**
+          * Anomaly markers (feature 2).
+          *
+          * A ring above the column, not a recoloured bar. Colour is doing enough work in a
+          * six-series chart already, and a mark that only exists as a hue disappears in
+          * greyscale and for a good share of readers — the same reasoning that puts a legend
+          * on every multi-series chart here. The shape is the encoding; the callout strip
+          * beneath names the period in words, so nothing depends on spotting it.
+          */}
+        {marks.map((i) => (
+          <g key={`mark-${i}`}>
+            <line
+              x1={pad.l + band * i + band / 2}
+              x2={pad.l + band * i + band / 2}
+              y1={y(columnTotals[i] ?? 0) - 14}
+              y2={y(columnTotals[i] ?? 0) - 4}
+              stroke="var(--color-ink-faint)"
+              strokeWidth={1}
+            />
+            <circle
+              cx={pad.l + band * i + band / 2}
+              cy={y(columnTotals[i] ?? 0) - 18}
+              r={3.5}
+              fill="var(--color-surface)"
+              stroke="var(--color-ink)"
+              strokeWidth={1.5}
+            >
+              <title>{`${labels[i]} — unusual for the months before it`}</title>
+            </circle>
+          </g>
+        ))}
+
+        {/* Axis labels, thinned — but never thinning away a flagged period. */}
         {labels.map((label, i) =>
-          i % step === 0 ? (
+          i % step === 0 || marks.includes(i) ? (
             <text
               key={label + i}
               x={pad.l + band * i + band / 2}
               y={H - 9}
               textAnchor="middle"
               fontSize={10}
-              fill="var(--color-ink-faint)"
+              fontWeight={marks.includes(i) ? 600 : 400}
+              fill={marks.includes(i) ? "var(--color-ink-2)" : "var(--color-ink-faint)"}
             >
               {label}
             </text>

@@ -56,8 +56,36 @@ function fold(draft: TileDraft): { ok: true; spec: TileSpec } | { ok: false; err
   if (draft.sourceKind === "model") {
     if (!draft.variableIds?.length) return { ok: false, error: "A model source needs at least one variableId." };
   } else if (draft.sourceKind === "database") {
-    if (!draft.tableSlug || !draft.dateFieldId || !draft.aggregation) {
-      return { ok: false, error: "A database source needs tableSlug, dateFieldId and aggregation." };
+    /**
+     * Named individually, and with the reason, because this message is a correction channel
+     * and not a log line (§1.3).
+     *
+     * The generic version of it — "needs tableSlug, dateFieldId and aggregation" — failed
+     * *two live runs in three* on "How many customers do we have?". The model would answer
+     * with a COUNT over `customers` and a null `dateFieldId`, which is a perfectly sensible
+     * reading of the question, get this back, and have no idea which of the three fields it
+     * was being asked about or why a question with no date in it needed a date column. All
+     * three attempts went the same way. Every other message in this module names the thing
+     * that was wrong and what was available instead; this one named nothing.
+     */
+    const missing = [
+      !draft.tableSlug && "tableSlug",
+      !draft.dateFieldId && "dateFieldId",
+      !draft.aggregation && "aggregation",
+    ].filter((field): field is string => typeof field === "string");
+
+    if (missing.length > 0) {
+      return {
+        ok: false,
+        error:
+          `A database source is missing ${missing.join(" and ")}. ` +
+          (missing.includes("dateFieldId")
+            ? "Every database tile needs a DATE column to bucket by, a KPI included — a KPI " +
+              "reads the latest period against the one before it, so it has to know what a " +
+              "period is. Copy a DATE field id from the table in the catalogue. "
+            : "") +
+          "Copy the ids exactly from the catalogue.",
+      };
     }
   } else {
     return { ok: false, error: "A chart or KPI needs sourceKind to be \"model\" or \"database\"." };
@@ -112,7 +140,10 @@ data.
 Choosing the form is most of the job:
 
 - "kpi" when the answer is a single number — "what is our ARR", "how many customers".
-  A KPI shows the latest period against the one before it. One series only.
+  A KPI shows the latest period against the one before it. One series only. A KPI still
+  needs a dateFieldId when its source is a database — that is how it knows what "the latest
+  period" is. "How many customers do we have" is a COUNT over the customers table bucketed
+  by its DATE column, not a tile without a date.
 - "chart" with form "line" for a trend over time in one unit.
 - "chart" with form "stacked-bar" ONLY when the parts genuinely sum to a meaningful whole
   (pipeline by stage sums to total pipeline; revenue and margin do not sum to anything).
@@ -128,7 +159,8 @@ Rules that are not negotiable:
 
 Fill every field. Use null for the ones that do not apply — a "text" tile has a null form
 and null source fields; a "kpi" or "chart" has a null body; COUNT has a null valueFieldId.
-"title" is the chart's title or the KPI's label.
+A database source is the exception: tableSlug, dateFieldId and aggregation are never null on
+one, whatever the tile's kind. "title" is the chart's title or the KPI's label.
 
 Title the tile the way an analyst would head a slide: what it shows, not what was asked.
 The note is one sentence on what the reader should take from it, or null.`;

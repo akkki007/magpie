@@ -4,6 +4,7 @@ import { useState, useTransition } from "react";
 import { Trash2 } from "lucide-react";
 
 import { BoardChart, full } from "@/components/board/chart";
+import { Insights } from "@/components/board/insight";
 import { deleteTile } from "@/app/(app)/boards/actions";
 import { toast } from "@/components/ui/toast";
 import { cn } from "@/lib/cn";
@@ -98,8 +99,13 @@ export function Tile({
           labels={resolved.labels}
           series={resolved.series}
           format={resolved.format}
+          /* The flagged periods, so the chart and the strip below it point at the same months. */
+          marks={[...new Set(resolved.insight?.anomalies.map((a) => a.index) ?? [])]}
         />
       </div>
+      {resolved.insight && (
+        <Insights insight={resolved.insight} format={resolved.format} />
+      )}
       {question && <Provenance question={question} />}
     </Card>
   );

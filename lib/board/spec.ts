@@ -5,6 +5,8 @@ import type { Table } from "@/lib/data/types";
 import { evaluate } from "@/lib/model/engine";
 import { TOTAL, type Model, type NumberFormat } from "@/lib/model/types";
 
+import { explain, type Insight } from "./insight";
+
 /**
  * What a board tile *is* (`docs/board-plan.md`).
  *
@@ -81,6 +83,13 @@ export type Resolved =
       labels: string[];
       series: ResolvedSeries[];
       format: NumberFormat;
+      /**
+       * Drivers and anomalies, computed from the series above (feature 2). Null when there
+       * is nothing to say — a two-period chart, parts that do not sum, a formula that is
+       * not additive. Silence is a real answer: a callout strip that always says something
+       * ends up saying nothing.
+       */
+      insight: Insight | null;
     }
   | {
       ok: true;
@@ -135,6 +144,16 @@ export function resolveTile(spec: TileSpec, ctx: ResolveContext): Resolved {
     labels: data.labels,
     series: data.series,
     format: data.format,
+    /**
+     * Computed on every read, not stored and not asked for.
+     *
+     * Not stored, for the reason §1 gives about tiles holding references rather than
+     * numbers: a driver saved beside a tile would start disagreeing with the chart the
+     * first time anyone edited a cell. Not asked for either — no flag on the spec — so
+     * every tile that already exists gains this without being rewritten, and a tile with
+     * nothing unusual in it simply renders no strip.
+     */
+    insight: explain(spec, { labels: data.labels, series: data.series }, ctx.model),
   };
 }
 
