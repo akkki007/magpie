@@ -50,3 +50,8 @@ __pycache__/
 
 # generated reconciliation fixtures — deterministic, regenerate with `bun run recon:seed`
 /data
+
+# demo recordings — oculon-product.mp4 is 22MB and was swept into a commit once
+# already, then removed with `git rm --cached`. Ignored as a pattern so the next
+# recording does not repeat it.
+*.mp4
