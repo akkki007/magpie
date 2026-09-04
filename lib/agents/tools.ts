@@ -20,6 +20,7 @@ import type { Actor } from "@/lib/model/changesets";
 import type { Model } from "@/lib/model/types";
 
 import type { Draft } from "./artifacts";
+import type { Mode } from "./modes";
 import { SILENT, type Observer } from "./observe";
 
 /**
@@ -51,17 +52,37 @@ export type ToolContext = {
    * without a run behind it; `SILENT` keeps every tool working and records nothing.
    */
   observe?: Observer;
+  /**
+   * Which mode the run is in, so `submitFinding` can refuse an answer that claims a write
+   * the mode made impossible. Defaults to `do`, where any such claim may well be true.
+   */
+  mode?: Mode;
 };
 
 export function buildOpsTools(ctx: ToolContext) {
   const { model, modelId, tables, actor } = ctx;
   const observe = ctx.observe ?? SILENT;
+  const mode = ctx.mode ?? "do";
+
+  /**
+   * The charts this run has actually drawn, so `submitFinding` can be grounded against them.
+   *
+   * The supervisor and every subagent are built from this one call, so a chart a *subagent*
+   * drew is citable by the supervisor that never saw the tool return — which is the case that
+   * matters, since the supervisor holds no read tools at all and delegation is the only way
+   * anything gets read.
+   */
+  const charts = new Map<string, string>();
+  const show = (key: string, card: Draft) => {
+    if (card.kind === "series") charts.set(key, card.title);
+    observe.show(key, card);
+  };
 
   const modelOutline = tool(
     async () => {
       const outline = getModelOutline(model);
       observe.ran("getModelOutline", `${outline.variables.length} variables`);
-      observe.show("outline", outlineCard(outline));
+      show("outline", outlineCard(outline));
       return JSON.stringify(outline);
     },
     {
@@ -94,7 +115,8 @@ export function buildOpsTools(ctx: ToolContext) {
       }
 
       observe.ran("getSeries", read.name);
-      observe.show(`series:${variableId}:${scenarioId ?? "base"}:${member ?? "TOTAL"}`, {
+      const chartKey = `series:${variableId}:${scenarioId ?? "base"}:${member ?? "TOTAL"}`;
+      show(chartKey, {
         kind: "series",
         status: "read",
         title: member ? `${read.name} · ${member}` : read.name,
@@ -103,8 +125,15 @@ export function buildOpsTools(ctx: ToolContext) {
         periods: read.periods.map((p) => p.period),
         series: [{ label: read.name, values: read.periods.map((p) => finite(p.value)) }],
         note: scenarioId ? `Under scenario ${scenarioId}` : undefined,
+        /**
+         * Pinnable only as the plain variable. A board tile carries no scenario and no
+         * dimension member, so a card for either is a different quantity from anything a
+         * tile could reference — offering a pin there would put a chart on the wall that
+         * quietly resolves to something else.
+         */
+        ref: scenarioId || member ? undefined : { kind: "model", variableIds: [variableId] },
       });
-      return JSON.stringify(read);
+      return JSON.stringify({ ...read, chartKey });
     },
     {
       name: "getSeries",
@@ -179,7 +208,7 @@ export function buildOpsTools(ctx: ToolContext) {
 
       observe.ran("sampleTable", `${rows.length} of ${table.rows.length} rows in ${table.name}`);
       /* The same rows the agent is reading, drawn as the grid they came out of. */
-      observe.show(`records:${table.slug}`, {
+      show(`records:${table.slug}`, {
         kind: "records",
         status: "read",
         slug: table.slug,
@@ -249,11 +278,21 @@ export function buildOpsTools(ctx: ToolContext) {
         "aggregateTable",
         `${label} · ${counted} record${counted === 1 ? "" : "s"}${outside > 0 ? `, ${outside} outside the horizon` : ""}`,
       );
-      observe.show(`rollup:${table.slug}:${dateFieldId}:${valueFieldId ?? "count"}:${breakdownFieldId ?? "none"}`, {
+      const chartKey = `rollup:${table.slug}:${dateFieldId}:${valueFieldId ?? "count"}:${breakdownFieldId ?? "none"}`;
+      show(chartKey, {
         kind: "series",
         status: "read",
         title: label,
         source: "records",
+        /* The rollup's own arguments are already a board source — see `SeriesRef`. */
+        ref: {
+          kind: "database",
+          tableSlug: table.slug,
+          dateFieldId,
+          valueFieldId: valueFieldId ?? null,
+          aggregation,
+          breakdownFieldId: breakdownFieldId ?? null,
+        },
         // A COUNT is a count of records whatever the column was. SUM and AVG inherit the
         // column's meaning, so the format comes from the column's own type rather than a
         // guess — summing a NUMBER column and drawing it as money is a lie in the axis.
@@ -284,6 +323,7 @@ export function buildOpsTools(ctx: ToolContext) {
         recordsOutsideHorizon: outside,
         datedRecords: result.total,
         periodsCovered: result.matched,
+        chartKey,
       });
     },
     {
@@ -369,9 +409,102 @@ export function buildOpsTools(ctx: ToolContext) {
    * now `answer / evidence / next`, with lengths that make a 24-item list impossible to
    * submit rather than merely discouraged.
    */
+  /**
+   * A claim to have written something, in a mode that cannot write.
+   *
+   * Deliberately narrow. It needs the agent as the subject, one of the verbs that assert a
+   * finished write, and **a thing this agent's write tools actually persist** — so "I have
+   * created a database table" is caught and "I have set out a plan" is not. Getting that
+   * wrong in the permissive direction reinstates the bug; getting it wrong in the strict
+   * direction costs one retry and a rephrased sentence, which is the cheaper mistake.
+   */
+  const CLAIMS_A_WRITE =
+    /\b(?:i|we)\b[^.!?]{0,40}?\b(?:created|added|built|set up|inserted|saved|updated|populated)\b[^.!?]{0,80}?\b(?:table|column|field|variable|scenario|tile|board|row|record|dataset)s?\b/i;
+
+  const claimed = (finding: { answer: string; evidence: string[]; next?: string }) =>
+    [finding.answer, ...finding.evidence, finding.next ?? ""].find((line) => CLAIMS_A_WRITE.test(line));
+
+  /** Sentences that assert a write, removed — the last resort below. */
+  const strip = (text: string) =>
+    text
+      .split(/(?<=[.!?])\s+/)
+      .filter((sentence) => !CLAIMS_A_WRITE.test(sentence))
+      .join(" ")
+      .trim();
+
+  /**
+   * Two rejections, then the sentence is cut.
+   *
+   * Unbounded rejection is its own failure mode — a run that will not finish is no better on
+   * screen than one that lies. The model gets two chances to say it correctly itself, and
+   * after that the claim is removed rather than stored, so the guarantee does not depend on
+   * the model ever cooperating.
+   */
+  const MAX_REFUSALS = 2;
+  let refusals = 0;
+
   const submit = tool(
-    async ({ answer, evidence, next }) => {
-      observe.finding({ answer, evidence, next });
+    async ({ answer, evidence, next, chart }) => {
+      /**
+       * **The cited chart is grounded, like every other reference this repo lets a model
+       * make.**
+       *
+       * The agent chooses which chart carries its point — that is an editorial judgement and
+       * exactly the kind this architecture gives a model. What it cannot do is cite one it
+       * never drew: the key has to be among the charts this run actually produced, or the
+       * conversation would render a chart that says nothing about the answer beside it, or
+       * nothing at all.
+       *
+       * The message lists the keys that *are* available, the same correction channel
+       * `lib/board/ask.ts` uses — an error a model can act on is worth more than a tidy one.
+       */
+      if (chart && !charts.has(chart)) {
+        return charts.size === 0
+          ? `No chart to cite: this run has not drawn one. Submit again without \`chart\`.`
+          : `"${chart}" is not a chart this run drew. Available: ${[...charts]
+              .map(([key, title]) => `${key} (${title})`)
+              .join("; ")}. Copy one exactly, or omit \`chart\`.`;
+      }
+      /**
+       * **The mode gate, enforced here rather than asked for in the prompt.**
+       *
+       * `lib/agents/modes.ts` opens by saying a mode selector that only rephrases an
+       * instruction is decoration, and then mitigated exactly this bug with prose — the
+       * `NOT_DONE` clause, spelling out that writing a file describing a table is not
+       * creating a table. It did not hold: a live run in ask mode, with no write tools at
+       * all, still answered "I have created a database table for tracking office expenses
+       * with columns for date, category, amount…". The gate held; the sentence lied, and a
+       * person reads the sentence and not the database.
+       *
+       * This is the move `submitFinding` already documents for answer *length* — a limit a
+       * model is asked to respect is a suggestion, a limit in the schema is refused and
+       * retried. In a read-only mode nothing was written, so a claim that something was is
+       * false by construction and can be refused without judging it.
+       */
+      if (mode !== "do") {
+        const offending = claimed({ answer, evidence, next });
+        if (offending && refusals < MAX_REFUSALS) {
+          refusals++;
+          return (
+            `Rejected, and not recorded: "${offending.trim().slice(0, 120)}" says you ${""}` +
+            `created something. You are in ${mode} mode and hold no tools that write, so ` +
+            `nothing was created — the sentence is false whatever else the answer gets right. ` +
+            `Writing a file describing a table is not creating a table. Resubmit with what you ` +
+            `found and what you *would* build, e.g. "here is the table I would create — switch ` +
+            `to Do mode and I will propose it".`
+          );
+        }
+        if (offending) {
+          // Out of retries. The claim is cut rather than stored: the one thing that must not
+          // happen is a saved answer asserting a write that never occurred.
+          answer = strip(answer) || `This mode cannot make changes. ${strip(next ?? "")}`.trim();
+          evidence = evidence.filter((line) => !CLAIMS_A_WRITE.test(line));
+          next = next && CLAIMS_A_WRITE.test(next) ? strip(next) || undefined : next;
+          if (evidence.length === 0) evidence = ["Nothing was written — this mode holds no write tools."];
+        }
+      }
+
+      observe.finding({ answer, evidence, next, chart });
       return "Recorded — that is your answer. Stop now; do not write it out again in prose.";
     },
     {
@@ -394,6 +527,12 @@ export function buildOpsTools(ctx: ToolContext) {
           .max(200)
           .optional()
           .describe("One sentence: what you would do about it, or what you built."),
+        chart: z
+          .string()
+          .optional()
+          .describe(
+            "The `chartKey` of the one chart that carries your point, copied exactly from a getSeries or aggregateTable result. It is drawn beside your answer. Omit it if no chart makes the point.",
+          ),
       }),
     },
   );

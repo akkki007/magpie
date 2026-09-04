@@ -364,3 +364,84 @@ many customers" needs no arithmetic — one run summed 24 monthly buckets, anoth
 count directly, and both were right. Asserting a route the model is free to choose is a
 flaky test dressed as a safety property. It now asserts the checkable thing instead: any
 arithmetic that *does* happen is recorded with its answer.
+
+## 11. The answer names its chart, and the chart can go on the wall
+
+Two changes, one to what the agent must not say and one to what it can point at.
+
+### 11.1 The mode gate was prose, so it did not hold
+
+`lib/agents/modes.ts` opens with the argument that a mode which only rephrases an instruction
+is decoration — the modes remove *tools*, not just wording. That argument was right and the
+file then broke it: the "you did not do it" clause, added after a run in ask mode answered
+"I have successfully created a database table", is itself only wording.
+
+It failed again. A live run in ask mode — holding no write tools whatsoever, with the whole
+clause in its prompt — answered **"I have created a database table for tracking office
+expenses with columns for date, category, amount…"**. Nothing was created. The gate held
+perfectly and the sentence still lied, which is the worse failure, because a person reads the
+sentence and not the table count.
+
+It survived two fixes because the only thing watching it was a **live** assertion: one real
+agent run, non-deterministic, silent on every run where the model happened to behave. It
+passed on the run before this one and failed on the next, with no code change in between.
+
+The enforcement now sits in `submitFinding`, which is where this repo already puts limits it
+means — the same tool documents that a limit a model is *asked* to respect is a suggestion,
+and a limit in the schema is refused and retried. In a read-only mode nothing was written, so
+a claim that something was is false **by construction** and can be refused without judging
+it. The refusal names the offending sentence and gives the honest alternative.
+
+Three details worth keeping:
+
+- **The match is narrow on purpose** — it needs the agent as subject, a completion verb, and
+  a thing the write tools actually persist. "I have set out a plan" is not a claim to have
+  built anything, and refusing it would leave plan mode unable to report at all.
+- **Two refusals, then the claim is cut.** An unbounded refusal loop is its own failure; a
+  *stored* answer asserting a write that never happened is the one outcome that must not
+  survive. The guarantee cannot rest on the model eventually cooperating.
+- **The assertions are pure.** Nine of them, invoking the tool directly with no model in the
+  loop, so the gate is checked on every `ops:check` rather than on the runs that get lucky.
+
+### 11.2 The finding draws the chart it is about
+
+The canvas holds every read, in the order it happened, and that is what you scroll to check
+the agent's reasoning. But an answer that says "New ARR fell 12% in Nov '26" beside a column
+of nine cards makes the *reader* do the matching, and the reader has the least context for it.
+
+So `submitFinding` takes a `chart`: the key of the one chart that carries the point, drawn
+directly beneath the answer in the conversation. `getSeries` and `aggregateTable` now return
+the `chartKey` of the card they drew, which is how the agent knows what to cite.
+
+**Chosen by the model, grounded by the code** — the same division `docs/board-plan.md`
+feature 1 draws. The key must be among the charts the run actually produced, or the tool
+refuses and lists the ones that exist. Without that, a cited chart is a claim the reader
+takes on trust: the pairing of a sentence with a picture *is* an assertion, and it should not
+be possible to make it about a chart nobody looked at. The supervisor and every subagent are
+built from one `buildOpsTools` call, so a chart a subagent drew is citable by the supervisor
+that never saw the tool return — which is the only case that matters, since the supervisor
+holds no read tools at all.
+
+The canvas keeps every card regardless. One chart is cited, not a gallery; the rest are
+already on the left.
+
+### 11.3 Pinning puts a reference on the board, never the numbers
+
+The inline chart carries a pin, which turns it into a real board tile.
+
+**What is pinned is the reference.** `docs/board-plan.md` §0 is that a board owns no numbers:
+a tile is a reference plus a form, resolved on every render. The canvas card holds resolved
+values — that is what a chart *is* — so pinning it verbatim would create precisely the fourth
+place a figure can come from that the rule exists to prevent, and it would be the copy on the
+wall, so it would be the one people believed the first time it disagreed with the model.
+
+Each series card therefore carries a `ref` describing how to re-derive it — a model variable,
+or the rollup's own arguments, which are already a board source. The pin turns that into a
+`TileSpec` and puts it through `groundTile`, the same gate the ask composer uses, because a
+card built two hours ago can name a column since deleted and the honest failure is a message
+saying which.
+
+**A series scoped to a scenario or one dimension member carries no `ref` and offers no pin.**
+A tile carries neither, so there is no tile that means the same thing, and a pin there would
+quietly put a different quantity on the wall. Asserted, and mutation-tested: making the pin
+unconditional fails the suite.

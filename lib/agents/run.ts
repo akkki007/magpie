@@ -379,6 +379,19 @@ async function drive(
     finding(submitted) {
       finding = submitted;
       steps.push({ at: new Date().toISOString(), kind: "message", name: "finding", detail: submitted.answer });
+      /**
+       * Mark the chart the answer cited, so the conversation can draw it beside the finding.
+       *
+       * A flag on the artifact rather than a column on the run: the artifacts are already
+       * stored as JSON on the row, the key is already how a card is addressed, and the whole
+       * point is *which of these cards* the answer is about. Exclusive, because "the chart
+       * that carries the point" is singular — a resubmitted finding moves the mark rather
+       * than accumulating a second one.
+       */
+      artifacts = artifacts.map((artifact) => ({
+        ...artifact,
+        cited: artifact.key === submitted.chart,
+      }));
       dirty = true;
     },
   };

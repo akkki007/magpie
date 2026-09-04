@@ -73,6 +73,30 @@ export type RecordsView = {
   total: number;
 };
 
+/**
+ * How to *re-derive* a series, so it can be pinned to a board.
+ *
+ * **A reference, never the numbers.** `docs/board-plan.md` §0 is that a board owns no
+ * numbers: a tile is a reference plus a form, and it resolves on every render. Pinning the
+ * values drawn on the canvas would create exactly the fourth place a figure can come from
+ * that the rule exists to prevent — and it would be the one on the wall, so it would be the
+ * one people believed the first time it disagreed with the model.
+ *
+ * Absent when the series cannot be expressed as one: a scenario or a single dimension member
+ * is a different quantity from the variable a tile would reference, and a tile carries
+ * neither. Those cards simply do not offer a pin, which is the honest outcome.
+ */
+export type SeriesRef =
+  | { kind: "model"; variableIds: string[] }
+  | {
+      kind: "database";
+      tableSlug: string;
+      dateFieldId: string;
+      valueFieldId: string | null;
+      aggregation: "SUM" | "COUNT" | "AVG";
+      breakdownFieldId: string | null;
+    };
+
 /** A series over the model's periods, from the plan or rolled up from records. */
 export type SeriesView = {
   kind: "series";
@@ -83,6 +107,8 @@ export type SeriesView = {
   periods: string[];
   series: { label: string; values: number[] }[];
   note?: string;
+  /** Set when this chart can become a board tile. See `SeriesRef`. */
+  ref?: SeriesRef;
 };
 
 /**
@@ -93,8 +119,15 @@ export type SeriesView = {
  */
 export type Draft = TableDraft | ProposalDraft | TileDraft | OutlineView | RecordsView | SeriesView;
 
-/** Keyed by what the card is *of*, which is how a second look updates it instead of stacking. */
-export type Artifact = Draft & { key: string; at: string };
+/**
+ * Keyed by what the card is *of*, which is how a second look updates it instead of stacking.
+ *
+ * `cited` marks the one card the run's answer pointed at, so the conversation can draw it
+ * beside the finding. Set from `submitFinding`'s `chart`, which is grounded against the keys
+ * actually shown — the agent chooses which chart carries its point, and cannot choose one it
+ * never looked at.
+ */
+export type Artifact = Draft & { key: string; at: string; cited?: boolean };
 
 type Args = Record<string, unknown>;
 

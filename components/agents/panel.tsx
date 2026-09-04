@@ -6,10 +6,12 @@ import { useRouter } from "next/navigation";
 import { spawnRun } from "@/app/(app)/agents/actions";
 import { Approval } from "@/components/agents/approval";
 import { Composer } from "@/components/agents/composer";
+import { FindingChart } from "@/components/agents/finding-chart";
 import { Markdown } from "@/components/agents/markdown";
 import { PlanCard } from "@/components/agents/plan-card";
 import { Steps } from "@/components/agents/steps";
 import { toast } from "@/components/ui/toast";
+import type { Artifact } from "@/lib/agents/artifacts";
 import type { Mode } from "@/lib/agents/modes";
 import type { PendingAction, Step, Todo } from "@/lib/agents/run";
 
@@ -37,6 +39,7 @@ export function Panel({
     activity: string | null;
     plan: Todo[];
     steps: Step[];
+    artifacts: Artifact[];
     pending: PendingAction[];
     result: string | null;
     error: string | null;
@@ -47,6 +50,9 @@ export function Panel({
   const [pending, setPending] = useState(false);
   const router = useRouter();
   const bottom = useRef<HTMLDivElement>(null);
+
+  /* The chart the answer named. `cited` is set in `run.ts` from `submitFinding`'s `chart`. */
+  const cited = run.artifacts.find((artifact) => artifact.cited && artifact.kind === "series");
 
   // Follow the run as it grows, the way a chat does — but only while it is live, so reading
   // a finished run does not fight the scroll.
@@ -92,6 +98,9 @@ export function Panel({
                 Finding
               </h2>
               <Markdown source={run.result} />
+              {/* The chart the answer cited, if it cited one. Nothing renders when it did
+                  not — a finding that needs no chart should not grow one. */}
+              {cited && <FindingChart runId={run.id} card={cited} />}
             </section>
           )}
 

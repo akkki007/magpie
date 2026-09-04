@@ -3,10 +3,23 @@
 import { after } from "next/server";
 import { revalidatePath } from "next/cache";
 
+import type { Artifact } from "@/lib/agents/artifacts";
 import { executeRun, resumeRun } from "@/lib/agents/run";
 import type { Mode } from "@/lib/agents/modes";
+import { groundTile } from "@/lib/board/ask";
+import { addTile, listBoards, readBoard } from "@/lib/board/persist";
+import { listTables, readTable } from "@/lib/data/persist";
+import type { Table } from "@/lib/data/types";
 import { db } from "@/lib/db";
+import { readModel } from "@/lib/model/persist";
 import { getSession } from "@/lib/session";
+
+/** Every table, rows included — grounding a pinned chart needs the fields. */
+async function allTables(): Promise<Table[]> {
+  const summaries = await listTables(db);
+  const tables = await Promise.all(summaries.map((s) => readTable(db, s.slug)));
+  return tables.filter((t): t is Table => t !== null);
+}
 
 /**
  * Spawning and steering a finance-ops run (`docs/agents-plan.md` A5, A6).
@@ -125,4 +138,64 @@ export async function readRun(runId: string) {
   const who = await actor();
   if (!who) return null;
   return db.agentRun.findUnique({ where: { id: runId } });
+}
+
+/**
+ * Pin a chart the agent drew onto a board (`docs/board-plan.md` §0, `docs/agents-plan.md` A5).
+ *
+ * **What is pinned is the reference, never the numbers.** The canvas card holds resolved
+ * values — that is what a chart is — but a board tile that carried those values would be the
+ * fourth place a figure can come from, and the one on the wall, so it would be the one people
+ * believed the first time it disagreed with the model. So the card's `ref` is turned back
+ * into a `TileSpec` and the tile resolves on every render like every other tile.
+ *
+ * It goes through `groundTile` for the same reason the ask composer does: a card built two
+ * hours ago can name a column that has since been deleted, and the honest failure is a
+ * message saying which, not a tile that throws when someone opens the board.
+ */
+export async function pinChart(runId: string, key: string, boardSlug?: string): Promise<Result<{ slug: string }>> {
+  const who = await actor();
+  if (!who) return { ok: false, error: "Your session has expired — sign in again." };
+
+  const run = await db.agentRun.findUnique({ where: { id: runId }, select: { artifacts: true } });
+  if (!run) return { ok: false, error: "That run no longer exists." };
+
+  const artifacts = (run.artifacts as Artifact[] | null) ?? [];
+  const card = artifacts.find((a) => a.key === key);
+  if (!card || card.kind !== "series") return { ok: false, error: "That chart is no longer on this run." };
+  if (!card.ref) {
+    // A scenario or single-member series. See `SeriesRef` — a tile carries neither, so there
+    // is no honest tile to make, and the card does not offer a pin in the first place.
+    return { ok: false, error: "This chart cannot become a tile — it is scoped to a scenario or one member." };
+  }
+
+  const [model, tables, boards] = await Promise.all([
+    readModel(db, "revenue-model-2026"),
+    allTables(),
+    listBoards(db),
+  ]);
+  if (!model) return { ok: false, error: "No model is seeded." };
+
+  const target = boardSlug ?? boards[0]?.slug;
+  if (!target) return { ok: false, error: "There is no board to pin to yet — make one first." };
+  const board = await readBoard(db, target);
+  if (!board) return { ok: false, error: "That board no longer exists." };
+
+  const spec = {
+    kind: "chart" as const,
+    title: card.title,
+    // The canvas draws one series stacked and several grouped; a pinned tile keeps the shape
+    // it was read in, so what lands on the board is what the person pinned.
+    form: card.series.length > 1 ? ("grouped-bar" as const) : ("stacked-bar" as const),
+    source: card.ref,
+  };
+
+  const grounded = groundTile(spec, model, tables);
+  if (!grounded.ok) return { ok: false, error: grounded.error };
+
+  /* The question a tile keeps is the run's task — where this figure came from. */
+  const run2 = await db.agentRun.findUnique({ where: { id: runId }, select: { task: true } });
+  await addTile(db, board.id, grounded.spec, run2?.task ?? null);
+  revalidatePath(`/boards/${target}`);
+  return { ok: true, slug: target };
 }

@@ -80,6 +80,13 @@ How to work:
    carry it — "onboarding runs 4–8 a month, rising through 2027, peaking in Apr '27 (8)" —
    and never list a table's columns after creating it.
 
+   **Cite the chart that carries your point.** getSeries and aggregateTable each return a
+   chartKey; pass the one whose picture makes your answer obvious as "chart", copied exactly,
+   and it is drawn directly beneath your answer. Pick the chart the sentence is *about* — if
+   you say New ARR fell in November, cite New ARR, not the revenue line you checked
+   afterwards. Omit it when the answer is a single number that no chart improves, or when you
+   read nothing worth drawing. One chart, not a gallery: the rest are on the canvas already.
+
 Rules that are not negotiable:
 
 - **Ground every number.** Only cite figures a tool actually returned. Never estimate, never
@@ -213,7 +220,9 @@ export function opsSubagents(tools: Tools) {
 }
 
 export async function createFinanceOpsAgent(ctx: ToolContext, mode: Mode = "do") {
-  const tools = buildOpsTools(ctx);
+  // The mode reaches the tools too, not just the prompt: `submitFinding` refuses an answer
+  // claiming a write that a read-only mode made impossible. See `lib/agents/tools.ts`.
+  const tools = buildOpsTools({ ...ctx, mode });
   const byName = (names: readonly string[]) => tools.filter((t) => names.includes(t.name));
 
   /**

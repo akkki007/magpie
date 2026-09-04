@@ -15,6 +15,7 @@ import { createFinanceOpsAgent, opsSubagents } from "../lib/agents/finance-ops";
 import { buildOpsTools, WRITE_TOOLS } from "../lib/agents/tools";
 import { describeCommands, type Artifact, type Draft } from "../lib/agents/artifacts";
 import type { Observer } from "../lib/agents/observe";
+import { groundTile } from "../lib/board/ask";
 import { CommandSchema } from "../lib/model/command-schema";
 import { toolsFor } from "../lib/agents/modes";
 import { makePlan } from "../lib/agents/planner";
@@ -54,11 +55,13 @@ const ctx = { model, modelId: modelRow.id, tables, actor: { id: null, name: "che
 const cards = new Map<string, Draft>();
 const ran: { name: string; detail?: string }[] = [];
 const settlements: { name: string; status: string; slug?: string }[] = [];
+/* Kept, not discarded: what a *refused* answer finally records is the thing worth asserting. */
+const findings: { answer: string; evidence: string[]; next?: string; chart?: string }[] = [];
 const recorder: Observer = {
   ran: (name, detail) => void ran.push({ name, detail }),
   show: (key, card) => void cards.set(key, card),
   settled: (name, status, detail) => void settlements.push({ name, status, slug: detail?.slug }),
-  finding: () => {},
+  finding: (submitted) => void findings.push(submitted),
 };
 
 const tools = buildOpsTools({ ...ctx, observe: recorder });
@@ -95,6 +98,157 @@ const wellShaped = await submit!.invoke({
   next: "Nothing to do — the count is complete.",
 });
 check("…and a short, cited answer is accepted", String(wellShaped).includes("Recorded"), String(wellShaped).slice(0, 60));
+
+/**
+ * **A read-only mode refuses an answer that claims a write.**
+ *
+ * This bug had been fixed once already, in prose — `modes.ts`'s `NOT_DONE` clause spells out
+ * that writing a file describing a table is not creating a table. A live run in ask mode
+ * cleared that clause and answered "I have created a database table for tracking office
+ * expenses with columns for date, category, amount…" anyway. Nothing was written; the answer
+ * still said so, and a person reads the answer rather than the table count.
+ *
+ * It kept coming back because the only thing watching it was a live assertion — one real
+ * agent run, non-deterministic, and silent on the runs where the model happened to behave.
+ * These are pure: they invoke the tool directly and never call a model, so the gate is
+ * checked on every `ops:check` rather than on the ones that get lucky.
+ */
+const askTools = buildOpsTools({ ...ctx, observe: recorder, mode: "ask" });
+const askSubmit = askTools.find((t) => t.name === "submitFinding")!;
+
+const lie = await askSubmit.invoke({
+  answer: "I have created a database table for tracking office expenses with columns for date and amount.",
+  evidence: ["Office Expenses table, 5 columns"],
+});
+check("ask mode refuses an answer claiming a write", String(lie).includes("Rejected"), String(lie).slice(0, 80));
+check(
+  "…and tells it what the honest sentence is",
+  /would/i.test(String(lie)) && /do mode/i.test(String(lie)),
+  String(lie).slice(0, 120),
+);
+
+/**
+ * The refusal has to be narrow, or it becomes its own bug: a plan the agent legitimately
+ * *designed* is not a claim to have built anything, and refusing it would leave plan mode
+ * unable to report at all.
+ */
+const design = await askSubmit.invoke({
+  answer: "Here is the table I would create — switch to Do mode and I will propose it.",
+  evidence: ["Five columns: date, category, amount, description, payer"],
+});
+check("…but a described design is accepted", String(design).includes("Recorded"), String(design).slice(0, 80));
+
+const legitimate = await askSubmit.invoke({
+  answer: "157 customers onboarded inside the horizon.",
+  evidence: ["157 records, Customers table"],
+});
+check("…and so is an ordinary finding", String(legitimate).includes("Recorded"), String(legitimate).slice(0, 80));
+
+/**
+ * The guarantee cannot rest on the model ever cooperating. After two refusals the claim is
+ * cut rather than stored — an unbounded refusal loop is its own failure, but a *saved* answer
+ * asserting a write that never happened is the one outcome that must not survive.
+ */
+const stubborn = { answer: "I have created the table with 5 columns.", evidence: ["Office Expenses table"] };
+await askSubmit.invoke(stubborn); // refusal 2 of 2 — the first was `lie` above
+const surrendered = await askSubmit.invoke(stubborn);
+check("a stubborn claim is cut, not stored", String(surrendered).includes("Recorded"), String(surrendered).slice(0, 60));
+check(
+  "…and what was recorded no longer claims it",
+  !/\bi have created\b/i.test(findings.at(-1)?.answer ?? ""),
+  findings.at(-1)?.answer ?? "(nothing recorded)",
+);
+
+/** `do` mode must not be touched by any of this — there, the claim may well be true. */
+const doSubmit = tools.find((t) => t.name === "submitFinding")!;
+const inDoMode = await doSubmit.invoke({
+  answer: "I have created the Office Expenses table.",
+  evidence: ["5 columns"],
+});
+check("do mode still accepts a claim it could have earned", String(inDoMode).includes("Recorded"), String(inDoMode).slice(0, 60));
+
+/**
+ * **The cited chart is grounded against the charts the run actually drew.**
+ *
+ * The agent chooses which chart carries its point — an editorial judgement, and the kind this
+ * architecture does hand to a model. What it must not be able to do is name one it never
+ * looked at, because the conversation draws that chart beside the answer and a reader takes
+ * the pairing as a claim.
+ */
+const noChartYet = await submit!.invoke({
+  answer: "157 customers.",
+  evidence: ["Customers table"],
+  chart: "series:v_new_arr:base:TOTAL",
+});
+check(
+  "a chart cannot be cited before one is drawn",
+  !String(noChartYet).includes("Recorded"),
+  String(noChartYet).slice(0, 80),
+);
+
+/* Draw one for real, through the tool that draws it, then cite it. */
+const seriesTool = tools.find((t) => t.name === "getSeries")!;
+const drawn = JSON.parse(String(await seriesTool.invoke({ variableId: "v_closing_arr" })));
+check("a series read reports the key of the chart it drew", typeof drawn.chartKey === "string", String(drawn.chartKey));
+
+const wrongKey = await submit!.invoke({
+  answer: "ARR closes at 49m.",
+  evidence: ["Closing ARR, Dec '27"],
+  chart: "series:v_invented:base:TOTAL",
+});
+check("an invented chart key is refused", !String(wrongKey).includes("Recorded"), String(wrongKey).slice(0, 80));
+check(
+  "…and the refusal lists the charts that exist",
+  String(wrongKey).includes(drawn.chartKey),
+  String(wrongKey).slice(0, 140),
+);
+
+const citedOk = await submit!.invoke({
+  answer: "ARR closes at 49m.",
+  evidence: ["Closing ARR, Dec '27"],
+  chart: drawn.chartKey,
+});
+check("…and a chart the run drew is accepted", String(citedOk).includes("Recorded"), String(citedOk).slice(0, 60));
+check("…and recorded against the finding", findings.at(-1)?.chart === drawn.chartKey, String(findings.at(-1)?.chart));
+
+/**
+ * **A pinned chart carries a reference, not the numbers.**
+ *
+ * `docs/board-plan.md` §0: a board owns no numbers. The canvas card holds resolved values —
+ * that is what a chart is — so pinning it verbatim would create exactly the fourth place a
+ * figure can come from that the rule exists to prevent, and it would be the copy on the wall.
+ * The card carries a `ref` instead, and the tile resolves like every other tile.
+ */
+const drawnCard = cards.get(drawn.chartKey);
+check("a model series card can be pinned", drawnCard?.kind === "series" && Boolean(drawnCard.ref), JSON.stringify(drawnCard?.kind));
+if (drawnCard?.kind === "series" && drawnCard.ref) {
+  const pinnable = groundTile(
+    { kind: "chart", title: drawnCard.title, form: "stacked-bar", source: drawnCard.ref },
+    model,
+    tables,
+  );
+  check("…and what it pins grounds as a real tile", pinnable.ok, pinnable.ok ? "" : pinnable.error);
+  check(
+    "…as a reference, carrying no values of its own",
+    !JSON.stringify(drawnCard.ref).includes(String(drawnCard.series[0].values[0])),
+    JSON.stringify(drawnCard.ref),
+  );
+}
+
+/**
+ * A scenario or single-member series has no tile that means the same thing — a tile carries
+ * neither — so it must offer no pin rather than one that quietly puts a different quantity
+ * on the wall.
+ */
+const scoped = JSON.parse(
+  String(await seriesTool.invoke({ variableId: "v_closing_arr", scenarioId: model.scenarios[0]?.id })),
+);
+const scopedCard = scoped.chartKey ? cards.get(scoped.chartKey) : undefined;
+check(
+  "a scenario-scoped series offers no pin",
+  scopedCard?.kind === "series" && scopedCard.ref === undefined,
+  JSON.stringify(scopedCard && scopedCard.kind === "series" ? scopedCard.ref : "no card"),
+);
 
 /**
  * The arithmetic tool is not a nicety. A live run read six correct monthly counts —
@@ -440,6 +594,26 @@ if (process.argv.includes("--live") && process.env.OPENAI_API_KEY) {
   );
   const drawn = readCards.find((card) => card.kind === "series");
   check("live: …including the series it rolled up", Boolean(drawn), readCards.map((c) => c.kind).join(", "));
+
+  /**
+   * **The cited chart, asserted as an invariant rather than as a route.**
+   *
+   * Whether a given answer *needs* a chart is the agent's judgement — a single number often
+   * does not — and §10 already records what happens when this suite asserts a route the model
+   * is free to choose: a correct run fails a flaky test dressed as a safety property. So this
+   * does not demand a citation. It demands that if there is one, it points at a chart this run
+   * really drew, and at exactly one, which is the part a reader takes on trust.
+   */
+  const citedCards = readCards.filter((card) => card.cited);
+  check("live: at most one chart is cited", citedCards.length <= 1, `${citedCards.length} cited`);
+  check(
+    "live: …and a cited card is a series that was drawn",
+    citedCards.every((card) => card.kind === "series" && readCards.some((c) => c.key === card.key)),
+    citedCards.map((c) => `${c.kind}:${c.key}`).join(", "),
+  );
+  if (citedCards[0]?.kind === "series") {
+    console.log(`  cited chart: ${citedCards[0].title}${citedCards[0].ref ? " (pinnable)" : " (no pin)"}`);
+  }
   if (drawn?.kind === "series") {
     check(
       "live: …drawn over every period, with real values",

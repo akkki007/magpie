@@ -26,6 +26,11 @@ export type Finding = {
   answer: string;
   evidence: string[];
   next?: string;
+  /**
+   * The key of the one chart that carries the answer, drawn beside it in the conversation.
+   * Grounded in `submitFinding` against the charts the run actually drew.
+   */
+  chart?: string;
 };
 
 export type Observer = {

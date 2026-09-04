@@ -32,6 +32,15 @@ export function toolsFor(mode: Mode, write: readonly string[]): readonly string[
  * worse than a refusal, because a person reads the sentence and not the database.
  *
  * The same failure the modelling agent had when it narrated a scenario it never proposed.
+ *
+ * **Necessary and not sufficient — this clause alone did not hold.** A later live run in ask
+ * mode answered "I have created a database table for tracking office expenses with columns
+ * for date, category, amount…" with all of the above in its prompt. Which is this file's own
+ * opening argument turned on itself: a mode that only rephrases an instruction is decoration,
+ * and so is a rule against lying that is only ever asked for. The enforcement now lives in
+ * `submitFinding` (`lib/agents/tools.ts`), which refuses a finding that claims a write when
+ * the mode holds no tool that could have made one. The prose stays because a model that is
+ * told the rule up front needs the refusal less often.
  */
 const NOT_DONE = `You have NO tools that change anything in this mode. So:
 
