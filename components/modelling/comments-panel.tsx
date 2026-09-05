@@ -124,7 +124,7 @@ export function CommentsPanel({ slug, model }: { slug: string; model: Model }) {
               <select
                 value={variableId}
                 onChange={(event) => setVariableId(event.target.value)}
-                className="min-w-0 flex-1 rounded-button border border-line bg-canvas px-1.5 py-1 text-[12px] text-ink-1 outline-none"
+                className="min-w-0 flex-1 rounded-button border border-line bg-canvas px-1.5 py-1 text-[12px] text-ink outline-none"
               >
                 {model.variables.map((v) => (
                   <option key={v.id} value={v.id}>{v.name}</option>
@@ -133,7 +133,7 @@ export function CommentsPanel({ slug, model }: { slug: string; model: Model }) {
               <select
                 value={period}
                 onChange={(event) => setPeriod(Number(event.target.value))}
-                className="w-24 shrink-0 rounded-button border border-line bg-canvas px-1.5 py-1 text-[12px] text-ink-1 outline-none"
+                className="w-24 shrink-0 rounded-button border border-line bg-canvas px-1.5 py-1 text-[12px] text-ink outline-none"
               >
                 {model.periods.map((p, i) => (
                   <option key={p.key} value={i}>{p.label}</option>
@@ -152,7 +152,7 @@ export function CommentsPanel({ slug, model }: { slug: string; model: Model }) {
                 }}
                 rows={1}
                 placeholder="Leave a note on this cell…"
-                className="max-h-20 min-h-8 flex-1 resize-none rounded-button border border-line bg-canvas px-2 py-1.5 text-[12px] text-ink-1 outline-none transition-colors duration-150 focus:border-blue-400"
+                className="max-h-20 min-h-8 flex-1 resize-none rounded-button border border-line bg-canvas px-2 py-1.5 text-[12px] text-ink outline-none transition-colors duration-150 focus:border-blue-400"
               />
               <button
                 type="button"
@@ -184,7 +184,7 @@ export function CommentsPanel({ slug, model }: { slug: string; model: Model }) {
                     <span>{comment.periodLabel}</span>
                     <span className="ml-auto">{comment.authorName}</span>
                   </div>
-                  <p className="mt-1 text-[13px] leading-snug text-ink-1">{comment.body}</p>
+                  <p className="mt-1 text-[13px] leading-snug text-ink">{comment.body}</p>
                   <button
                     type="button"
                     disabled={busy}

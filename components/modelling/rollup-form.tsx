@@ -177,7 +177,7 @@ export function RollupForm({
 }
 
 const SELECT =
-  "w-full rounded-button border border-line bg-canvas px-2 py-1 text-[12px] text-ink-1 outline-none focus:border-blue-400";
+  "w-full rounded-button border border-line bg-canvas px-2 py-1 text-[12px] text-ink outline-none focus:border-blue-400";
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (

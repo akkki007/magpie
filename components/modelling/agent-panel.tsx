@@ -28,6 +28,7 @@ import {
   rejectModelProposal,
   type AgentChatSummary,
 } from "@/app/(app)/models/actions";
+import { Markdown } from "@/components/agents/markdown";
 import { cn } from "@/lib/cn";
 import type { Command } from "@/lib/model/commands";
 
@@ -241,7 +242,7 @@ export function AgentPanel({
                           chat.id === currentChatId && "bg-hover",
                         )}
                       >
-                        <span className="min-w-0 flex-1 truncate text-[12px] text-ink-1">
+                        <span className="min-w-0 flex-1 truncate text-[12px] text-ink">
                           {chat.title}
                         </span>
                         <span className="shrink-0 text-[11px] text-ink-faint">{ago(chat.updatedAt)}</span>
@@ -447,7 +448,7 @@ function AgentThread({
           {messages.map((message) => (
             <li key={message.id} className="flex flex-col gap-1.5">
               {message.role === "user" ? (
-                <p className="rounded-card bg-canvas px-2.5 py-1.5 text-[12px] text-ink-1">
+                <p className="rounded-card bg-canvas px-2.5 py-1.5 text-[12px] text-ink">
                   {message.parts.map((part) => (part.type === "text" ? part.text : "")).join("")}
                 </p>
               ) : (
@@ -501,7 +502,7 @@ function AgentThread({
           }}
           rows={1}
           placeholder="Ask about this model…"
-          className="max-h-24 min-h-8 flex-1 resize-none rounded-button border border-line bg-canvas px-2 py-1.5 text-[13px] text-ink-1 outline-none transition-colors duration-150 focus:border-blue-400"
+          className="max-h-24 min-h-8 flex-1 resize-none rounded-button border border-line bg-canvas px-2 py-1.5 text-[13px] text-ink outline-none transition-colors duration-150 focus:border-blue-400"
         />
         {busy ? (
           <button
@@ -552,7 +553,16 @@ function MessagePart({
 }) {
   switch (part.type) {
     case "text":
-      return part.text ? <p className="px-1 text-[13px] leading-snug text-ink-1">{part.text}</p> : null;
+      // Markdown, not a raw string. The agent answers in prose with bold figures and
+      // bullets — rendering that verbatim put literal `**` on screen and made a good
+      // answer look like a log line. Shared with the finance-ops panel rather than
+      // reimplemented: one renderer, so both agent surfaces degrade the same way on a
+      // construct neither of them expects.
+      return part.text ? (
+        <div className="px-1 text-[13px] leading-snug text-ink">
+          <Markdown source={part.text} />
+        </div>
+      ) : null;
 
     case "tool-getModelOutline":
     case "tool-getVariable":

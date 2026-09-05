@@ -63,14 +63,14 @@ function ImportCsvForm({
         value={name}
         onChange={(event) => setName(event.target.value)}
         placeholder="Variable name"
-        className="rounded-button border border-line bg-canvas px-2 py-1 text-[12px] text-ink-1 outline-none focus:border-blue-400"
+        className="rounded-button border border-line bg-canvas px-2 py-1 text-[12px] text-ink outline-none focus:border-blue-400"
       />
       <textarea
         value={csv}
         onChange={(event) => setCsv(event.target.value)}
         rows={5}
         placeholder={"2026-01, 12000\n2026-02, 13500\n…"}
-        className="resize-none rounded-button border border-line bg-canvas px-2 py-1.5 font-mono text-[11px] text-ink-1 outline-none focus:border-blue-400"
+        className="resize-none rounded-button border border-line bg-canvas px-2 py-1.5 font-mono text-[11px] text-ink outline-none focus:border-blue-400"
       />
       <p className="px-0.5 text-[11px] text-ink-faint">
         One period and value per line — a paste from a spreadsheet works.

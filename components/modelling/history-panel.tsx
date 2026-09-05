@@ -155,7 +155,7 @@ export function HistoryPanel({ slug }: { slug: string }) {
                   if (event.key === "Enter") saveVersion();
                 }}
                 placeholder="Name this version"
-                className="min-w-0 flex-1 rounded-button border border-line bg-canvas px-2 py-1 text-[12px] text-ink-1 outline-none transition-colors duration-150 focus:border-blue-400"
+                className="min-w-0 flex-1 rounded-button border border-line bg-canvas px-2 py-1 text-[12px] text-ink outline-none transition-colors duration-150 focus:border-blue-400"
               />
               <button
                 type="button"
@@ -185,7 +185,7 @@ export function HistoryPanel({ slug }: { slug: string }) {
                         key={version.id}
                         className="group flex items-baseline gap-2 px-4 py-1.5 transition-colors duration-150 hover:bg-hover"
                       >
-                        <span className="min-w-0 flex-1 truncate text-[12px] text-ink-1">
+                        <span className="min-w-0 flex-1 truncate text-[12px] text-ink">
                           {version.label}
                         </span>
                         <span className="shrink-0 text-[11px] text-ink-faint">
@@ -226,7 +226,7 @@ export function HistoryPanel({ slug }: { slug: string }) {
                         )}
                         <div className="flex items-baseline gap-2 px-4 py-1.5 transition-colors duration-150 hover:bg-hover">
                           <Mark kind={entry.kind} />
-                          <span className="min-w-0 flex-1 truncate text-[12px] text-ink-1">
+                          <span className="min-w-0 flex-1 truncate text-[12px] text-ink">
                             {entry.label}
                           </span>
                           <span className="shrink-0 text-[11px] text-ink-muted">

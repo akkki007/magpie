@@ -248,7 +248,7 @@ export function FormulaEditor({
           onClick={(event) => setCaret(event.currentTarget.selectionStart ?? 0)}
           onKeyDown={onKeyDown}
           className={cn(
-            "w-full rounded-button border bg-canvas px-2 py-1.5 font-mono text-[13px] text-ink-1",
+            "w-full rounded-button border bg-canvas px-2 py-1.5 font-mono text-[13px] text-ink",
             "outline-none transition-colors duration-150",
             error ? "border-neg-fg/40 focus:border-neg-fg" : "border-line focus:border-blue-400",
           )}
@@ -291,7 +291,7 @@ export function FormulaEditor({
                 <span
                   className={cn(
                     "shrink-0 text-[12px]",
-                    suggestion.kind === "function" ? "font-mono text-violet-700" : "text-ink-1",
+                    suggestion.kind === "function" ? "font-mono text-violet-700" : "text-ink",
                   )}
                 >
                   {suggestion.label}
