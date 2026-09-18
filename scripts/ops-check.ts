@@ -19,6 +19,7 @@ import { groundTile } from "../lib/board/ask";
 import { CommandSchema } from "../lib/model/command-schema";
 import { toolsFor } from "../lib/agents/modes";
 import { makePlan } from "../lib/agents/planner";
+import { listBoards } from "../lib/board/persist";
 import { listTables, readTable } from "../lib/data/persist";
 import type { Table } from "../lib/data/types";
 import { readModel } from "../lib/model/persist";
@@ -42,7 +43,8 @@ if (!model || tables.length === 0) {
 }
 
 const modelRow = (await db.model.findUnique({ where: { slug: "revenue-model-2026" }, select: { id: true } }))!;
-const ctx = { model, modelId: modelRow.id, tables, actor: { id: null, name: "check" } };
+const boards = (await listBoards(db)).map((b) => ({ slug: b.slug, title: b.title }));
+const ctx = { model, modelId: modelRow.id, tables, boards, actor: { id: null, name: "check" } };
 
 /* ── The tool surface ─────────────────────────────────────────────────────*/
 

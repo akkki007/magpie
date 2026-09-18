@@ -1,12 +1,14 @@
 import type { Prisma } from "@/lib/generated/prisma/client";
 import { Command } from "@langchain/langgraph";
 
+import { listBoards } from "@/lib/board/persist";
 import { listTables, readTable } from "@/lib/data/persist";
 import type { Table } from "@/lib/data/types";
 import { db } from "@/lib/db";
 import type { Actor } from "@/lib/model/changesets";
 import { readModel } from "@/lib/model/persist";
 
+import * as bus from "./bus";
 import { createFinanceOpsAgent } from "./finance-ops";
 import { makePlan } from "./planner";
 import { recordProposed, settle, show, type Artifact, type Naming } from "./artifacts";
@@ -136,13 +138,13 @@ const artifactsOf = (run: { artifacts: unknown }) => ((run.artifacts as Artifact
 
 /** The model and tables a run reads. Loaded twice per run — once to plan, once to work. */
 async function loadContext() {
-  const [model, summaries] = await Promise.all([readModel(db, MODEL_SLUG), listTables(db)]);
+  const [model, summaries, boards] = await Promise.all([readModel(db, MODEL_SLUG), listTables(db), listBoards(db)]);
   const tables = (await Promise.all(summaries.map((s) => readTable(db, s.slug)))).filter(
     (t): t is Table => t !== null,
   );
   const modelRow = await db.model.findUnique({ where: { slug: MODEL_SLUG }, select: { id: true } });
   if (!model || !modelRow) return null;
-  return { model, modelId: modelRow.id, tables };
+  return { model, modelId: modelRow.id, tables, boards: boards.map((b) => ({ slug: b.slug, title: b.title })) };
 }
 
 export async function executeRun(runId: string, task: string, actor: Actor, mode: Mode = "do"): Promise<void> {
@@ -232,6 +234,18 @@ function stable(value: unknown): string {
  * which is fine. Beyond that it is a loop, and the person has already answered.
  */
 const MAX_REDECLINES = 2;
+
+/**
+ * How many times a person approves a write and the tool itself then refuses it — for any
+ * reason, not just repeats of the identical arguments — before a run stops asking and just
+ * says so.
+ *
+ * Three, not zero: a tool refusal can be an honest first-time surprise (a stale field id, a
+ * board deleted mid-run), and someone should get to see that once or twice before the run
+ * gives up. Beyond that, a person is re-approving the same failure over and over, and every
+ * approval spent on a doomed write is one a real proposal did not get.
+ */
+const MAX_TOOL_FAILURES = 3;
 
 /**
  * What to show as the live activity line.
@@ -334,11 +348,45 @@ async function drive(
   let seenMessages = 0;
   let lastWrite = 0;
   let autoRejects = 0;
+  /**
+   * Per-tool count of approved writes the *tool itself* then refused — grounding failures,
+   * not human decisions. `declined` only remembers a human's "no", so a tool that keeps
+   * failing for a *different* reason each time (a new guessed board slug, say) was never
+   * caught by it: every guess is a new signature, so each one reached a person for approval
+   * again. Verified live: `addBoardTile` did this four times in one run before this existed.
+   * See `MAX_TOOL_FAILURES`.
+   */
+  const toolFailures: Record<string, number> = {};
   let dirty = false;
   let writing = false;
   let closed = false;
   let finding: Finding | null = null;
   let input: unknown = firstInput;
+
+  /**
+   * The live line to the canvas — see `lib/agents/bus.ts`.
+   *
+   * Called from inside the observer, not the ticker: a chart the agent just drew should
+   * reach a watching browser the instant `show` fires, not on the next 500ms flush. The DB
+   * write stays throttled (`flush`, below) — this does not touch Postgres at all, so firing
+   * it on every tool return costs nothing but handing an object to subscribers already in
+   * memory.
+   */
+  const emit = (status: bus.RunEvent["status"]) => {
+    bus.publish(runId, {
+      id: runId,
+      status,
+      activity: activityOf(steps.at(-1)),
+      plan: advance(todos, steps),
+      steps,
+      files,
+      artifacts,
+      pending: [],
+      declined,
+      result: null,
+      error: null,
+    });
+  };
 
   /**
    * What the tools report into.
@@ -352,10 +400,12 @@ async function drive(
     ran(name, detail) {
       steps.push({ at: new Date().toISOString(), kind: "tool", name, detail });
       dirty = true;
+      emit("RUNNING");
     },
     show(key, card) {
       artifacts = show(artifacts, key, card);
       dirty = true;
+      emit("RUNNING");
     },
     settled(name, status, detail) {
       const outcome =
@@ -373,8 +423,11 @@ async function drive(
       if (asked) asked.detail = outcome;
       else steps.push({ at: new Date().toISOString(), kind: "tool", name, detail: outcome });
 
+      if (status === "failed") toolFailures[name] = (toolFailures[name] ?? 0) + 1;
+
       artifacts = settle(artifacts, status, { tool: name, slug: detail?.slug });
       dirty = true;
+      emit("RUNNING");
     },
     finding(submitted) {
       finding = submitted;
@@ -393,6 +446,7 @@ async function drive(
         cited: artifact.key === submitted.chart,
       }));
       dirty = true;
+      emit("RUNNING");
     },
   };
 
@@ -480,6 +534,7 @@ async function drive(
          * the tool trail kept moving.
          */
         dirty = true;
+        emit("RUNNING");
         await flush();
       }
 
@@ -522,6 +577,19 @@ async function drive(
             finishedAt: new Date(),
           },
         });
+        bus.publish(runId, {
+          id: runId,
+          status: "DONE",
+          activity: null,
+          plan: todos.map((todo) => ({ ...todo, status: "completed" as const })),
+          steps,
+          files,
+          artifacts,
+          pending: [],
+          declined,
+          result: finding ? renderFinding(finding) : finalText(snapshot.values ?? {}),
+          error: null,
+        });
         return;
       }
 
@@ -545,14 +613,23 @@ async function drive(
       const repeat = pending.every(
         (action) => declined.includes(signature(action)) || timesDeclined(action.name) >= 2,
       );
-      if (repeat && pending.length > 0 && autoRejects < MAX_REDECLINES) {
+      /**
+       * Every pending write is through a tool that has already refused, for whatever reason,
+       * `MAX_TOOL_FAILURES` times this run. Distinct from `repeat`: those are a human's "no"
+       * remembered by *argument*; this is the tool's own "no", which a new guess each time
+       * evades — see `MAX_TOOL_FAILURES` and the observer's `settled`.
+       */
+      const exhausted = pending.every((action) => (toolFailures[action.name] ?? 0) >= MAX_TOOL_FAILURES);
+
+      if ((repeat || exhausted) && pending.length > 0 && autoRejects < MAX_REDECLINES) {
         autoRejects++;
         input = new Command({
           resume: {
             decisions: pending.map(() => ({
               type: "reject" as const,
-              message:
-                "This was already declined on this run. Do not ask again. Report that it was declined and finish your answer now.",
+              message: exhausted
+                ? "This tool has refused what you approved too many times this run. Stop trying it — report what you were attempting, why it kept failing, and finish your answer without it."
+                : "This was already declined on this run. Do not ask again. Report that it was declined and finish your answer now.",
             })),
           },
         });
@@ -560,11 +637,14 @@ async function drive(
         continue;
       }
 
-      if (repeat && pending.length > 0) {
+      if ((repeat || exhausted) && pending.length > 0) {
         close();
         for (const step of steps) {
           if (step.detail === "waiting for approval") step.detail = "declined";
         }
+        const stoppedMessage = exhausted
+          ? "Stopped: a tool kept refusing what was approved, so the run was ended. Nothing was written."
+          : "Stopped: the agent kept asking to make a change that was already declined, so the run was ended. Nothing was written.";
         await db.agentRun.update({
           where: { id: runId },
           data: {
@@ -575,10 +655,22 @@ async function drive(
             pending: asJson([]),
             declined: asJson(declined),
             activity: null,
-            result:
-              "Stopped: the agent kept asking to make a change that was already declined, so the run was ended. Nothing was written.",
+            result: stoppedMessage,
             finishedAt: new Date(),
           },
+        });
+        bus.publish(runId, {
+          id: runId,
+          status: "DONE",
+          activity: null,
+          plan: advance(todos, steps),
+          steps,
+          files,
+          artifacts,
+          pending: [],
+          declined,
+          result: stoppedMessage,
+          error: null,
         });
         return;
       }
@@ -591,12 +683,20 @@ async function drive(
       close();
       artifacts = recordProposed(artifacts, pending, signature, naming);
 
-      /* Mark the step and hand it to a human. */
-      const halted = pending[0]?.name;
-      const last = [...steps].reverse().find((step) => step.name === halted);
-      if (last) last.detail = "waiting for approval";
-      else if (halted) {
-        steps.push({ at: new Date().toISOString(), kind: "tool", name: halted, detail: "waiting for approval" });
+      /**
+       * Mark the step and hand it to a human — every pending action, not just the first.
+       *
+       * A run can halt on more than one `actionRequest` at once (two writes proposed in the
+       * same turn, more likely now that subagents can fan out in parallel — see
+       * `lib/agents/finance-ops.ts`), and `pending` already carries all of them. Marking only
+       * `pending[0]` left the second write's step invisible in the trail even though its
+       * artifact card and its entry in `pending` were both there — a real gap, not a
+       * simplification.
+       */
+      for (const action of pending) {
+        const last = [...steps].reverse().find((step) => step.name === action.name && step.detail !== "waiting for approval");
+        if (last) last.detail = "waiting for approval";
+        else steps.push({ at: new Date().toISOString(), kind: "tool", name: action.name, detail: "waiting for approval" });
       }
 
       await db.agentRun.update({
@@ -612,6 +712,19 @@ async function drive(
           declined: asJson(declined),
           result: describeInterrupt(interrupts),
         },
+      });
+      bus.publish(runId, {
+        id: runId,
+        status: "WAITING",
+        activity: null,
+        plan: advance(todos, steps),
+        steps,
+        files,
+        artifacts,
+        pending,
+        declined,
+        result: describeInterrupt(interrupts),
+        error: null,
       });
       return;
     }
@@ -639,6 +752,7 @@ async function fail(runId: string, error: string) {
     where: { id: runId },
     data: { status: "FAILED", error, activity: null, finishedAt: new Date() },
   });
+  bus.publish(runId, { id: runId, status: "FAILED", error, activity: null });
 }
 
 /* ── Reading LangChain messages without importing its class hierarchy ──────

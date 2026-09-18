@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 
 import { readRun } from "@/app/(app)/agents/actions";
-import { Canvas } from "@/components/agents/canvas";
+import { CopilotCanvas } from "@/components/agents/copilot-canvas";
 import { Panel } from "@/components/agents/panel";
 import type { Artifact } from "@/lib/agents/artifacts";
 import type { PendingAction, Step, Todo } from "@/lib/agents/run";
@@ -29,11 +29,17 @@ export type RunSnapshot = {
  * A run: the work on the left, the conversation on the right
  * (`docs/agents-plan.md` A5).
  *
- * **Polling, not streaming.** Progress here arrives at the granularity that actually changes
- * — a todo flipping to completed, a subagent returning, a table taking shape — which is
- * seconds apart, not tokens apart. A socket would be more machinery for a worse fit. It
- * polls fast (900ms) while running because the canvas is meant to feel live, and stops the
- * moment the run is terminal so a finished run costs nothing to read.
+ * **Streaming, over `/agents/[id]/stream`.** `lib/agents/bus.ts` hands the run's own process a
+ * snapshot the instant a tool returns — a chart drawn, a table proposed, a todo ticked off —
+ * and this reads it over Server-Sent Events instead of asking on a timer. `EventSource`
+ * reconnects on its own if the connection drops (a Vercel Function's execution limit, a proxy
+ * hiccup), and each reconnect gets the current row again as its first event, so nothing is
+ * lost by dropping and picking back up.
+ *
+ * **A slow poll still runs underneath it**, deliberately not removed. This is a live
+ * financial workspace: a stream that silently stopped delivering (blocked by some proxy in a
+ * way that never fires `onerror`) is a worse failure than a redundant request every few
+ * seconds, so `readRun` keeps confirming the truth independently of whatever the stream says.
  */
 export function RunView({
   initial,
@@ -46,6 +52,18 @@ export function RunView({
 }) {
   const [run, setRun] = useState(initial);
   const live = run.status === "RUNNING" || run.status === "WAITING";
+
+  useEffect(() => {
+    if (!live) return;
+
+    const source = new EventSource(`/agents/${run.id}/stream`);
+    source.onmessage = (message) => {
+      const event = JSON.parse(message.data) as Partial<RunSnapshot> & { id: string; status: RunSnapshot["status"] };
+      setRun((prev) => (prev.id === event.id ? { ...prev, ...event } : prev));
+    };
+
+    return () => source.close();
+  }, [live, run.id]);
 
   useEffect(() => {
     if (!live) return;
@@ -70,7 +88,7 @@ export function RunView({
         result: next.result,
         error: next.error,
       });
-    }, 900);
+    }, 5000);
 
     return () => {
       cancelled = true;
@@ -85,7 +103,7 @@ export function RunView({
   return (
     <div className="flex min-h-0 flex-1 overflow-hidden">
       <div className="min-w-0 flex-1 overflow-y-auto bg-app">
-        <Canvas artifacts={run.artifacts} files={files} activity={run.activity} />
+        <CopilotCanvas runId={run.id} live={live} artifacts={run.artifacts} files={files} activity={run.activity} />
       </div>
 
       <aside

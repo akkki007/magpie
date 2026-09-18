@@ -31,8 +31,14 @@
     "recon:ablate": "bun run scripts/recon-ablate.ts"
   },
   "dependencies": {
+    "@ag-ui/client": "0.0.59",
+    "@ag-ui/core": "0.0.59",
+    "@ag-ui/encoder": "0.0.59",
     "@ai-sdk/openai": "^4.0.56",
     "@ai-sdk/react": "^4.0.93",
+    "@copilotkit/react-core": "^1.72.0",
+    "@copilotkit/react-ui": "^1.72.0",
+    "@copilotkit/runtime": "^1.72.0",
     "@langchain/core": "^1.2.9",
     "@langchain/langgraph-checkpoint-postgres": "^1.0.5",
     "@langchain/openai": "^1.5.11",

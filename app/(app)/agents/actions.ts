@@ -4,6 +4,7 @@ import { after } from "next/server";
 import { revalidatePath } from "next/cache";
 
 import type { Artifact } from "@/lib/agents/artifacts";
+import * as bus from "@/lib/agents/bus";
 import { executeRun, resumeRun } from "@/lib/agents/run";
 import type { Mode } from "@/lib/agents/modes";
 import { groundTile } from "@/lib/board/ask";
@@ -71,16 +72,14 @@ export async function spawnRun(task: string, mode: Mode = "do"): Promise<Result<
     } catch (error) {
       // executeRun handles its own failures; this is the last resort, so a run can never
       // be left RUNNING forever with nobody coming back to it.
+      const message = error instanceof Error ? error.message : String(error);
       await db.agentRun
         .update({
           where: { id: run.id },
-          data: {
-            status: "FAILED",
-            error: error instanceof Error ? error.message : String(error),
-            finishedAt: new Date(),
-          },
+          data: { status: "FAILED", error: message, finishedAt: new Date() },
         })
         .catch(() => {});
+      bus.publish(run.id, { id: run.id, status: "FAILED", error: message, activity: null });
     }
   });
 
@@ -116,16 +115,14 @@ export async function decideRun(
     try {
       await resumeRun(runId, payload, who);
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       await db.agentRun
         .update({
           where: { id: runId },
-          data: {
-            status: "FAILED",
-            error: error instanceof Error ? error.message : String(error),
-            finishedAt: new Date(),
-          },
+          data: { status: "FAILED", error: message, finishedAt: new Date() },
         })
         .catch(() => {});
+      bus.publish(runId, { id: runId, status: "FAILED", error: message, activity: null });
     }
   });
 

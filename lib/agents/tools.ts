@@ -46,6 +46,8 @@ export type ToolContext = {
   model: Model;
   modelId: string;
   tables: Table[];
+  /** Every board's slug and title — see `boardTile`'s use below. */
+  boards: { slug: string; title: string }[];
   actor: Actor;
   /**
    * Where a tool reports what it just did. Optional so scripts can build the tool surface
@@ -60,7 +62,9 @@ export type ToolContext = {
 };
 
 export function buildOpsTools(ctx: ToolContext) {
-  const { model, modelId, tables, actor } = ctx;
+  // Named apart from the `listBoards` tool below (also locally `boards`) — this is the raw
+  // list from context, that is the tool wrapping it.
+  const { model, modelId, tables, boards: boardList, actor } = ctx;
   const observe = ctx.observe ?? SILENT;
   const mode = ctx.mode ?? "do";
 
@@ -609,7 +613,32 @@ export function buildOpsTools(ctx: ToolContext) {
         return `Rejected: ${why}`;
       };
 
-      const board = await readBoard(db, boardSlug);
+      /**
+       * The supervisor holds no read tools — `listBoards` is not among them, by design — so
+       * `boardSlug` is always a guess, not something it looked up. Verified live: with one
+       * real board seeded, it tried "main-board", "default", "main" and the board's own
+       * *title* before giving up, each attempt only after a person approved it. A guess that
+       * happens to name the one board that exists resolves normally; a guess that names the
+       * *only* board's title is close enough to also resolve, since that is the one
+       * ambiguity a single-board workspace can have. Anything else refuses with the real
+       * slugs named, so a re-ask (if there is one) is informed rather than another blind
+       * guess — and `MAX_TOOL_FAILURES` in `lib/agents/run.ts` bounds how many of those a
+       * run gets before it stops asking a person to keep re-approving them.
+       */
+      const bySlug = boardList.find((b) => b.slug === boardSlug);
+      const resolvedSlug =
+        bySlug?.slug ??
+        (boardList.length === 1 && boardList[0].title.toLowerCase() === boardSlug.toLowerCase()
+          ? boardList[0].slug
+          : null);
+
+      if (!resolvedSlug) {
+        const known =
+          boardList.length > 0 ? boardList.map((b) => `"${b.slug}"`).join(", ") : "none — there are no boards yet";
+        return refuse(`No board "${boardSlug}". The real board slugs are: ${known}.`);
+      }
+
+      const board = await readBoard(db, resolvedSlug);
       if (!board) return refuse(`No board "${boardSlug}".`);
 
       const parsed = TileSpec.safeParse(spec);
@@ -634,8 +663,10 @@ export function buildOpsTools(ctx: ToolContext) {
     },
     {
       name: "addBoardTile",
-      description:
-        "Put a chart, KPI or text tile on a board. The spec is the same shape the board's own ask produces: {kind, title|label, form, source, note} or {kind:'text', title, body}.",
+      description: `Put a chart, KPI or text tile on a board. The spec is the same shape the board's own ask produces: {kind, title|label, form, source, note} or {kind:'text', title, body}.
+
+boardSlug must be one of the real boards below — never guessed, never the board's title:
+${boardList.length > 0 ? boardList.map((b) => `- "${b.slug}" (${b.title})`).join("\n") : "(there are no boards yet — this tool has nothing to target)"}`,
       schema: z.object({
         boardSlug: z.string(),
         spec: z.any(),
