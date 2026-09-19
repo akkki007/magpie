@@ -1,0 +1,12 @@
+# `learning/` is NOT here on purpose — `/learning` imports it (`@/learning/path`),
+# so dropping it breaks the build, not just the docs.
+.git
+.env
+.env.*
+node_modules
+.next
+lib/generated
+designs
+.claude
+.agents
+*.md
