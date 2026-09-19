@@ -69,6 +69,12 @@ key works and the domain is verified, without sending anything.
 | `bun run data:check` / `board:check` / `tour:check` | Database, board and demo-tour suites |
 | `bun run seed:database` / `seed:board` | The Customers table and the reporting board |
 
+## Deploying
+
+`DEPLOY.md` is the runbook for AWS — ECS Fargate behind an ALB, RDS Postgres, secrets in
+Secrets Manager. Every step says what it does and why, because the failures here are the
+kind that look like a bug in the app and are not.
+
 ## Stack
 
 TypeScript · Next.js 16 (App Router) · React 19 · Tailwind v4 · Prisma 7 on local
