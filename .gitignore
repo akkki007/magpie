@@ -92,3 +92,12 @@ __pycache__/
 
 # Pitch Q&A answers. Working notes.
 /pitch-questions.md
+
+# Commit-authorship notes. These list the team's personal email addresses, and this repo is
+# public — the addresses stay on the machines that need them and out of the history.
+/COMMIT-AUTHORS.md
+/git-author.md
+
+# Intermediate SVGs from the diagram scripts in assets/diagrams. The PNG is the artefact
+# and the script is the source; the SVG in between is neither.
+/assets/diagrams/*.svg
