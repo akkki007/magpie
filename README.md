@@ -67,7 +67,16 @@ key works and the domain is verified, without sending anything.
 | `bun run auth:tables` | Prints the tables Better Auth expects, read from the installed library |
 | `bun run mail:check` | Verifies the Resend key and sending domain without sending |
 | `bun run data:check` / `board:check` / `tour:check` | Database, board and demo-tour suites |
-| `bun run seed:database` / `seed:board` | The Customers table and the reporting board |
+| `bun run seed` / `seed:database` / `seed:board` | The model, the Customers table and the reporting board |
+| `bun run calc:check` | Asserts the modelling engine's aggregation rollup against the seeded model |
+| `bun run history:check` / `agent:check` / `ops:check` | Command history, the model agent, and the ops agent |
+| `bun run recon:seed` / `recon:ingest` / `recon:match` | Generate the synthetic batch, ingest it, run the deterministic matcher |
+| `bun run recon:eval` | Scores a run against the answer key — precision, recall, false-match rate |
+| `bun run recon:agent` / `recon:ablate` | The adjudication tier, and the ablation that shows which rules earn their place |
+
+`recon:eval` is the one that matters. It scores the matcher against a `truth.json` the
+matcher has never seen, and a change that moves the false-match rate off zero is wrong
+however good the match rate looks.
 
 ## Deploying
 
