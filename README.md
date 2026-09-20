@@ -112,6 +112,8 @@ lib/
   authz        (planned) requireMembership — the tenancy gate
   calc/        (planned) the calculation engine
   demo/        fixtures, deleted at M0
+assets/
+  diagrams/    generated architecture diagrams + the scripts that draw them
 docs/          design-system.md · auth-plan.md
 modelling/     brief.md (verbatim product brief) · main.md (the architecture)
 designs/       the prototype screens everything is measured against
