@@ -1,0 +1,431 @@
+@import "tailwindcss";
+
+/* Class-based dark mode. Set on <html> before paint by the script in app/layout.tsx. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Magpie design tokens — see docs/design-system.md
+   This file is the ONLY place a hex value may appear.
+   ───────────────────────────────────────────────────────────────────────── */
+
+@theme {
+  /* Neutrals */
+  --color-app: #f8f8fa;
+  --color-surface: #ffffff;
+  --color-subtle: #fafafc;
+  --color-muted: #f4f4f6;
+  --color-hover: #f0f0f2;
+  --color-line: #ededed;
+  --color-line-strong: #dddddd;
+
+  --color-ink: #1c1c1c;
+  --color-ink-2: #232325;
+  --color-ink-muted: #737373;
+  --color-ink-faint: #a0a0a4;
+
+  /* Brand — blue-400 anchors the identity; white carries everything else.
+     400 is the signature hue (accents, sparklines, marks). Solid fills that
+     carry white text step down to 600/700 so labels stay legible. */
+  --color-blue-50: #eff6ff;
+  --color-blue-100: #dbeafe;
+  --color-blue-200: #bfdbfe;
+  --color-blue-300: #93c5fd;
+  --color-blue-400: #60a5fa;
+  --color-blue-500: #3b82f6;
+  --color-blue-600: #2563eb;
+  --color-blue-700: #1d4ed8;
+  /* The AI orb. Sampled from the rail in designs/proto-screen-1: it is a
+     magenta-violet, not a blue. It marks the assistant, and the assistant is a
+     machine — same family as the formula pills below. */
+  --color-orb-hi: #eed2f8;
+  --color-orb-to: #b06ab2;
+  --color-orb-from: #9a56b9;
+
+  /* Machine-authored artefacts — violet. Sampled straight out of
+     designs/proto-screen-3 and designs/modelling-1: the formula pills, the
+     sparklines and the AI action bar are all violet in the prototypes, not
+     blue. Blue stays the *interactive* hue (buttons, links, focus); violet
+     marks the things a machine wrote. Keeping them apart is what stops an
+     AI-proposed number from looking like a button. */
+  --color-violet-50: #f7f3ff;
+  --color-violet-100: #f0eafc; /* formula pill + time-context chip fill */
+  --color-violet-200: #ddd2f8;
+  --color-violet-400: #7866d6; /* sparkline stroke */
+  --color-violet-500: #6751d7;
+  --color-violet-700: #542cb1; /* the one solid AI action ("Compare") */
+
+  /* Data visualisation — the prototypes' ramp, sampled from the chart legends
+     in designs/proto-screen-1. Teal → navy with a mint and a pale green, not a
+     rainbow: series separate by value as much as by hue, which is also what
+     makes a six-series chart survive greyscale. */
+  --color-viz-1: #1781bd; /* Sales */
+  --color-viz-2: #3db6ad; /* Expenses */
+  --color-viz-3: #cce5cf; /* Operating Profit */
+  --color-viz-4: #396799; /* navy */
+  --color-viz-5: #76d8bf; /* mint */
+  --color-viz-6: #4aa1a8; /* deep teal */
+
+  /* Semantic — deltas only */
+  --color-pos-bg: #d3f9e4;
+  --color-pos-fg: #3e9f69;
+  --color-neg-bg: #ffebee;
+  --color-neg-fg: #c91425;
+
+  /* Label chips — organisational, never semantic */
+  --color-chip-amber: #ffe591;
+  --color-chip-rose: #ffcfcb;
+  --color-chip-graphite: #d8d8d8;
+  --color-chip-sky: #d5eafe;
+  --color-chip-blue: #bfdbfe;
+
+  /* Type */
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-inter-tight), var(--font-inter), ui-sans-serif, sans-serif;
+  /* Trial heading face. Applied to the hero only for now — swap the utility
+     `font-heading` for `font-display` to revert any single heading. */
+  --font-heading: var(--font-hinato), var(--font-inter-tight), ui-sans-serif, sans-serif;
+
+  /* Radius */
+  --radius-panel: 16px;
+  --radius-card: 12px;
+  --radius-control: 8px;
+  --radius-button: 6px;
+  --radius-chip: 5px;
+
+  /* Elevation — hairlines, not shadows */
+  --shadow-e1: 0 1px 2px rgba(16, 16, 20, 0.04);
+  --shadow-e2: 0 1px 3px rgba(16, 16, 20, 0.06), 0 8px 24px rgba(16, 16, 20, 0.04);
+  --shadow-e3: 0 1px 3px rgba(16, 16, 20, 0.07), 0 18px 48px rgba(16, 16, 20, 0.07);
+
+  /* Motion */
+  --ease-out-quint: cubic-bezier(0.2, 0, 0, 1);
+
+  /* ── Learning surface ──────────────────────────────────────────────────
+     A second, deliberately separate visual language for /learning: warm
+     paper, serif headings, mono labels. Long-form reading is not the same
+     task as using a finance tool, and keeping the two visually distinct
+     means nobody ever mistakes a lesson for the product. Used ONLY by
+     components/learning/* and app/learning/*. */
+  --color-paper: #f5f4f2;
+  --color-paper-card: #ffffff;
+  --color-paper-line: #e6e4e0;
+  --color-paper-line-soft: #efedea;
+  --color-paper-ink: #1a1a18;
+  --color-paper-ink-2: #3a3a36;
+  --color-paper-muted: #6f6d67;
+  --color-paper-faint: #9a978f;
+  --color-paper-code: #f2f0ed;
+
+  /* Quiz + callout states — warmer than the product's semantic pair */
+  --color-ok-bg: #eef7f0;
+  --color-ok-line: #bcdcc4;
+  --color-ok-fg: #2f7d4a;
+  --color-no-bg: #fdeff0;
+  --color-no-line: #f2c4c8;
+  --color-no-fg: #b3303c;
+  --color-hint-bg: #fdf6e8;
+  --color-hint-line: #ecdcb8;
+  --color-hint-fg: #8a6b23;
+
+  /* Modal scrim. Its own token because it must stay dark in BOTH themes — the
+     obvious `bg-paper-ink/40` inverts under dark mode and washes the page out. */
+  --color-scrim: rgba(20, 20, 18, 0.45);
+
+  /* Generic only. A custom property is resolved where it is DECLARED, so if
+     these referenced --font-newsreader (which only exists on the /learning
+     wrapper, not on :root) the whole declaration would be invalid at computed
+     value time and every .font-serif would silently fall back to sans.
+     The real faces are layered on in the scoped block below. */
+  --font-serif: ui-serif, Georgia, serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+@layer base {
+  /* The learning surface upgrades the two generic stacks to the real faces.
+     Scoped here so /learning's fonts are never loaded on the marketing pages. */
+  [data-surface="learning"] {
+    --font-serif: var(--font-newsreader), ui-serif, Georgia, serif;
+    --font-mono: var(--font-jetbrains), ui-monospace, SFMono-Regular, monospace;
+  }
+
+  /* ── Dark mode: the LEARNING surface only ────────────────────────────────
+     docs/design-system.md is explicit that the product is a white instrument,
+     so none of the --color-app / --color-surface / --color-ink product tokens
+     are touched here. /learning is already a deliberately separate visual
+     language, and long-form reading at night is a real use for it.
+
+     These re-declare the same custom properties the @theme block above sets,
+     so every existing `bg-paper-card` / `text-paper-ink` utility follows along
+     with no markup change. @layer base wins over @theme on equal specificity
+     because it is emitted later. */
+  .dark {
+    --color-paper: #141412;
+    --color-paper-card: #1b1b19;
+    --color-paper-line: #2f2f2b;
+    --color-paper-line-soft: #252522;
+    --color-paper-ink: #f0efeb;
+    --color-paper-ink-2: #cbc9c2;
+    --color-paper-muted: #96938b;
+    --color-paper-faint: #6f6c64;
+    --color-paper-code: #201f1c;
+
+    /* Callout tones: same hues, re-cut for a dark ground. */
+    --color-ok-bg: #14231a;
+    --color-ok-line: #2d4b36;
+    --color-ok-fg: #6cc78d;
+    --color-no-bg: #271518;
+    --color-no-line: #4d2a2e;
+    --color-no-fg: #e8848e;
+    --color-hint-bg: #241f12;
+    --color-hint-line: #453c22;
+    --color-hint-fg: #d9b866;
+
+    --color-scrim: rgba(0, 0, 0, 0.6);
+
+    color-scheme: dark;
+  }
+}
+
+/* ── Shiki ────────────────────────────────────────────────────────────────
+   From https://code-blocks.pheralb.dev/r/shiki-css.json, trimmed to the parts
+   this codebase uses — the lesson `code` block has no diff/focus/anchor
+   notation, so those rules would be dead CSS.
+
+   Shiki's dual-theme output puts the light colour in `color` and the dark one
+   in a `--shiki-dark` custom property on the same span. Switching themes is
+   therefore a CSS swap, not a re-highlight. */
+@layer components {
+  .shiki,
+  .shiki span {
+    font-family: var(--font-mono);
+    background-color: transparent !important;
+  }
+
+  .dark .shiki,
+  .dark .shiki span {
+    color: var(--shiki-dark) !important;
+  }
+
+  pre.shiki {
+    padding-block: 0.625rem;
+    overflow-x: auto;
+  }
+
+  pre.shiki span.line {
+    display: inline-block;
+    width: 100%;
+    padding-inline: 1rem;
+  }
+}
+
+@layer base {
+  html {
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    scroll-behavior: smooth;
+  }
+
+  body {
+    background-color: var(--color-app);
+    color: var(--color-ink-2);
+    font-family: var(--font-sans);
+    font-feature-settings: "cv11", "ss01";
+  }
+
+  /* Numbers align in columns, everywhere. */
+  .tnum,
+  table,
+  [data-numeric] {
+    font-variant-numeric: tabular-nums;
+  }
+
+  ::selection {
+    background: var(--color-blue-200);
+    color: var(--color-ink);
+  }
+
+  :focus-visible {
+    outline: none;
+    box-shadow:
+      0 0 0 1px var(--color-blue-600),
+      0 0 0 4px var(--color-blue-200);
+    border-radius: var(--radius-button);
+  }
+}
+
+@layer components {
+  /* The one saturated action on a viewport. */
+  .btn-primary {
+    background-color: var(--color-blue-600);
+    color: #fff;
+    border-radius: var(--radius-button);
+    transition: background-color 150ms var(--ease-out-quint);
+  }
+  .btn-primary:hover {
+    background-color: var(--color-blue-700);
+  }
+
+  .btn-secondary {
+    background-color: var(--color-surface);
+    color: var(--color-ink);
+    border: 1px solid var(--color-line-strong);
+    border-radius: var(--radius-button);
+    transition:
+      background-color 150ms var(--ease-out-quint),
+      border-color 150ms var(--ease-out-quint);
+  }
+  .btn-secondary:hover {
+    background-color: var(--color-muted);
+    border-color: #c9c9c9;
+  }
+
+  /* Formula pill — blue because a machine evaluates it. */
+  /* A formula is machine-authored, so it is violet, and it has no border: in
+     designs/modelling-1 the pill is a flat fill inside the cell, not a control
+     sitting on top of it. */
+  .formula-pill {
+    background-color: var(--color-violet-100);
+    border-radius: var(--radius-chip);
+    color: var(--color-ink-2);
+  }
+
+  /* Scrollbars inside the product. The platform default is a heavy grey slab
+     that competes with the numbers — in a dense grid it is the loudest thing on
+     screen. Scoped to the app surface so /learning keeps the native one, which
+     is what a long article wants. */
+  [data-surface="app"] ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  [data-surface="app"] ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  [data-surface="app"] ::-webkit-scrollbar-thumb {
+    background: var(--color-line-strong);
+    border: 3px solid var(--color-surface);
+    border-radius: 999px;
+  }
+  [data-surface="app"] ::-webkit-scrollbar-thumb:hover {
+    background: var(--color-ink-faint);
+  }
+  [data-surface="app"] * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-line-strong) transparent;
+  }
+
+  /* Hairline grid backdrop used behind hero / CTA. */
+  .grid-lines {
+    background-image:
+      linear-gradient(to right, rgba(28, 28, 28, 0.035) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(28, 28, 28, 0.035) 1px, transparent 1px);
+    background-size: 64px 64px;
+  }
+}
+
+/* Scroll reveal: opacity + 8px rise, once. Nothing else moves. */
+@layer utilities {
+  /* Hidden only when JS is confirmed present (see the head script in layout.tsx).
+     Without it the page renders fully visible rather than blank. */
+  .js .reveal {
+    opacity: 0;
+    transform: translateY(8px);
+    transition:
+      opacity 300ms var(--ease-out-quint),
+      transform 300ms var(--ease-out-quint);
+  }
+  .js .reveal.is-in {
+    opacity: 1;
+    transform: none;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .js .reveal,
+    .js .reveal.is-in {
+      opacity: 1;
+      transform: none;
+      transition: none;
+    }
+    html {
+      scroll-behavior: auto;
+    }
+  }
+}
+
+/* ─── Demo tour (driver.js) ──────────────────────────────────────────────
+   driver.js ships its own popover chrome; this replaces it with the design
+   system's, so a recording does not show a second visual language on top of
+   the product. Hairlines not shadows, near-black type, blue for the thing you
+   press — the same six rules every other surface follows.
+
+   Every colour below is a `--color-*` token, which is the only spelling that
+   exists. The first version of this block used the names from the table in
+   `docs/design-system.md` (`--bg-surface`, `--text-primary`) — those are the
+   doc's labels for the tokens, not the tokens. An undefined `var()` does not
+   fall back: the declaration computes to `unset`, so `background: var(--bg-surface)`
+   made the popover *transparent* and overrode driver.css's own `#fff`, which is
+   why the table underneath was reading straight through it. It looked exactly
+   like a z-index bug and was not one.
+
+   `background-color`, not the `background` shorthand, for the same reason:
+   the shorthand resets everything it covers, so a bad value takes the base
+   stylesheet's colour down with it. */
+.driver-popover.magpie-tour {
+  background-color: var(--color-surface);
+  border: 1px solid var(--color-line);
+  border-radius: 12px;
+  box-shadow: 0 8px 28px rgb(16 16 20 / 12%);
+  padding: 16px;
+  max-width: 340px;
+  font-family: var(--font-sans, inherit);
+}
+
+.driver-popover.magpie-tour .driver-popover-title {
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--color-ink);
+}
+
+.driver-popover.magpie-tour .driver-popover-description {
+  margin-top: 6px;
+  font-size: 13px;
+  line-height: 1.65;
+  color: var(--color-ink-2);
+}
+
+.driver-popover.magpie-tour .driver-popover-progress-text {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-ink-faint);
+}
+
+.driver-popover.magpie-tour .driver-popover-footer-btn {
+  border: 1px solid var(--color-line-strong);
+  border-radius: 8px;
+  padding: 5px 11px;
+  font-size: 12px;
+  font-weight: 500;
+  text-shadow: none;
+  color: var(--color-ink-2);
+  background-color: var(--color-surface);
+}
+
+.driver-popover.magpie-tour .driver-popover-footer-btn:hover {
+  background-color: var(--color-hover);
+}
+
+/* The forward action is the one you press — the only coloured control here. */
+.driver-popover.magpie-tour .driver-popover-next-btn {
+  background-color: var(--color-blue-600);
+  border-color: var(--color-blue-600);
+  color: #fff;
+}
+
+.driver-popover.magpie-tour .driver-popover-next-btn:hover {
+  background-color: var(--color-blue-700);
+  border-color: var(--color-blue-700);
+  color: #fff;
+}
+
+.driver-popover.magpie-tour .driver-popover-arrow {
+  border-color: var(--color-surface);
+}

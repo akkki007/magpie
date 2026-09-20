@@ -1,0 +1,799 @@
+// Magpie's data model. See docs/auth-plan.md §3 for why these tables look the
+// way they do.
+//
+// The auth tables below belong to Better Auth: it decides what columns it
+// needs from the config in lib/auth.ts, and querying a table that disagrees
+// with it fails at runtime, not at build.
+//
+// `bunx @better-auth/cli generate` is the usual way to derive them, but the CLI
+// is published separately and currently lags the library (1.5.0-beta against
+// better-auth 1.7.2) — it omits `account.issuer`, which the running library
+// writes on every sign-up. So the source of truth is the library itself:
+//
+//   bun run auth:tables
+//
+// prints the exact fields and indexes the installed version expects. Reconcile
+// this file against that output, then `bun run db:migrate`.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../lib/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id            String    @id
+  name          String
+  email         String
+  emailVerified Boolean   @default(false)
+  image         String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  sessions      Session[]
+  accounts      Account[]
+
+  @@unique([email])
+  @@map("user")
+}
+
+model Session {
+  id        String   @id
+  expiresAt DateTime
+  token     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  ipAddress String?
+  userAgent String?
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([token])
+  @@index([userId])
+  @@map("session")
+}
+
+model Account {
+  id                    String    @id
+  /// Who vouched for this identity: `local:credential` for a password, or the
+  /// OAuth issuer URL. Paired with accountId it is what makes "the same Google
+  /// account" a single row rather than a duplicate on every sign-in.
+  issuer                String
+  accountId             String
+  providerId            String
+  userId                String
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@unique([issuer, accountId])
+  @@index([userId])
+  @@map("account")
+}
+
+model Verification {
+  id         String   @id
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([identifier])
+  @@map("verification")
+}
+
+// ─── Modelling ──────────────────────────────────────────────────────────────
+//
+// `docs/modelling-plan.md` M0. These tables are the persisted form of the types
+// in `lib/model/types.ts`, and the field names match deliberately: the goal of
+// M0 is that the query returns the shape the engine already takes and nothing
+// above `lib/model` changes.
+//
+// Three rules from the plan are enforced here rather than by convention:
+//
+//  1. §2 — money is `numeric(20,6)`, never float. A `Float` column in this
+//     block is a bug, and M0.6's golden test exists to fail when one appears.
+//  2. §1.1 — a formula is a tree of rows, never a string. There is deliberately
+//     no `expression TEXT` column, not even "for debugging": the moment one
+//     exists it becomes the thing that is actually read, and renaming a
+//     variable silently breaks sixty formulas.
+//  3. §1.6 — a dimensioned variable stores one series per member and no total.
+//     The parent row is a rollup, so it cannot disagree with its children.
+//
+// `organisationId` is nullable only until A3 lands the org tables. The column
+// costs nothing now and saves a migration over every row later.
+
+enum Grain {
+  MONTH
+  QUARTER
+  YEAR
+}
+
+enum VariableKind {
+  INPUT
+  FORMULA
+  LINKED
+}
+
+/// §2 lists `DATE` as a fifth format. It is deliberately absent: nothing in the
+/// product renders one, and `formatValue`'s switch is exhaustive, so a `DATE`
+/// row would load fine and then render as nothing. The database must not be
+/// able to express a state the engine cannot honour — that correspondence is
+/// the whole premise of M0. Add it here on the day the renderer handles it.
+enum NumberFormat {
+  CURRENCY
+  COUNT
+  PERCENT
+  RATIO
+}
+
+/// §1.2. How a series collapses across time. Get this wrong and every
+/// quarterly view in the product is quietly incorrect.
+enum Aggregation {
+  SUM
+  FIRST
+  LAST
+  AVG
+  NONE
+}
+
+/// §1.6. Explicit rather than inferred from `aggregation`: ACV averages across
+/// plans but is a LAST across time, and guessing one from the other is how a
+/// rate gets summed into nonsense.
+enum MemberRollup {
+  SUM
+  AVG
+}
+
+/// Organisational only — the pastel highlighter chips, never semantic.
+enum ChipTone {
+  amber
+  rose
+  graphite
+  sky
+  blue
+}
+
+enum FormulaNodeType {
+  literal
+  ref
+  binary
+  call
+}
+
+/// Spelled out rather than stored as the symbol, so the column is readable in
+/// `prisma studio` and a symbol change in the UI is not a data migration.
+enum BinaryOp {
+  ADD
+  SUBTRACT
+  MULTIPLY
+  DIVIDE
+  POWER
+  EQ
+  NEQ
+  LT
+  LTE
+  GT
+  GTE
+}
+
+/// The primitive set (§3). `lib/model/primitives.ts` holds arity and help text
+/// for each of these and fails to compile if the two lists drift apart.
+enum FormulaFn {
+  PRIOR
+  NEXT
+  YTD
+  CUMULATIVE
+  OPENING
+  CLOSING
+  GROWTH
+  SPREAD
+  IF
+  MIN
+  MAX
+  ABS
+  MEMBER_SUM
+  MEMBER_AVG
+  MEMBER_MIN
+  MEMBER_MAX
+  MEMBER_COUNT
+}
+
+/// Who caused a change. §5's agent and §6's sync both write to the audit log,
+/// and this is a fact about the event that cannot be reconstructed afterwards —
+/// unlike a lifecycle field, which needs code to maintain it, so `status` waits
+/// for M5's proposal flow rather than sitting here unmaintained.
+enum ChangeOrigin {
+  USER
+  AGENT
+  SYNC
+}
+
+/// What a changeset *is*, which is what makes the undo stack reconstructible
+/// from the log. See `lib/model/changesets.ts`.
+enum ChangeKind {
+  EDIT
+  UNDO
+  REDO
+  ROLLBACK
+}
+
+/// A changeset's place in §1.4's proposal lifecycle. `null` means the question does not
+/// apply — a USER or SYNC changeset is never proposed, it is simply applied, the way every
+/// changeset before M5 worked. Only an AGENT changeset is ever PROPOSED: it holds commands
+/// that have NOT been applied to the model, and it takes no `seq` until accepted, so it
+/// cannot be mistaken for something already in the ordered log.
+enum ChangeSetStatus {
+  PROPOSED
+  ACCEPTED
+  REJECTED
+}
+
+/// Adding a command type is a migration on purpose: §1.3's list is meant to be
+/// short, and a new mutation is a decision, not an implementation detail.
+enum CommandType {
+  SetInput
+  RenameVariable
+  SetFormula
+  InsertVariable
+  RemoveVariable
+  CreateScenario
+  RenameScenario
+  DeleteScenario
+  SetOverride
+}
+
+model Model {
+  id             String          @id @default(uuid())
+  organisationId String?
+  name           String
+  /// Stable URL key, so `/models/[slug]` survives a rename.
+  slug           String
+  baseGrain      Grain           @default(MONTH)
+  /// The columns derive from these two rather than being stored per period.
+  horizonStart   DateTime        @db.Date
+  horizonEnd     DateTime        @db.Date
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  groups         VariableGroup[]
+  variables      Variable[]
+  scenarios      Scenario[]
+  changeSets     ChangeSet[]
+  versions       ModelVersion[]
+  agentChats     AgentChat[]
+  comments       Comment[]
+
+  @@unique([slug])
+  @@index([organisationId])
+  @@map("model")
+}
+
+model VariableGroup {
+  id        String     @id @default(uuid())
+  modelId   String
+  name      String
+  chip      ChipTone   @default(graphite)
+  order     Int
+  model     Model      @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  variables Variable[]
+
+  @@unique([modelId, name])
+  @@index([modelId])
+  @@map("variable_group")
+}
+
+model Variable {
+  id           String        @id @default(uuid())
+  modelId      String
+  groupId      String
+  name         String
+  kind         VariableKind
+  format       NumberFormat
+  /// §1.2 — belongs to the variable, never to the chart.
+  aggregation  Aggregation
+  /// Expands the row into one child per member (§1.6).
+  dimensionId  String?
+  memberRollup MemberRollup?
+  /// The violet time chip on a reference, e.g. "Monthly".
+  timeContext  String?
+  note         String?
+  order        Int
+
+  model        Model              @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  group        VariableGroup      @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  dimension    Dimension?         @relation(fields: [dimensionId], references: [id])
+  formula      FormulaNode[]      @relation("VariableFormula")
+  /// Formula nodes elsewhere that point *at* this variable.
+  referencedBy FormulaNode[]      @relation("FormulaRef")
+  inputs       VariableInput[]
+  series       VariableSeries[]
+  comments     Comment[]
+  overrides    ScenarioOverride[]
+
+  // §2: a formula referencing "Revenue" can only mean one variable. The
+  // case-insensitive half of this is a functional index added in the migration
+  // — Prisma's schema language cannot express `lower(name)`.
+  @@unique([modelId, name])
+  @@index([modelId])
+  @@index([groupId])
+  @@map("variable")
+}
+
+model Dimension {
+  id             String            @id @default(uuid())
+  organisationId String?
+  name           String
+  members        DimensionMember[]
+  variables      Variable[]
+
+  @@index([organisationId])
+  @@map("dimension")
+}
+
+model DimensionMember {
+  id          String    @id @default(uuid())
+  dimensionId String
+  /// Stable key used by inputs and formula refs; `name` is display only.
+  key         String
+  name        String
+  order       Int
+  dimension   Dimension @relation(fields: [dimensionId], references: [id], onDelete: Cascade)
+
+  @@unique([dimensionId, key])
+  @@index([dimensionId])
+  @@map("dimension_member")
+}
+
+/// §1.1. A formula is this tree and nothing else.
+model FormulaNode {
+  id            String          @id @default(uuid())
+  variableId    String
+  parentId      String?
+  type          FormulaNodeType
+  /// `binary` only.
+  op            BinaryOp?
+  /// `literal` only. Numeric, not float — a rate typed as 0.075 must survive.
+  literal       Decimal?        @db.Decimal(20, 6)
+  /// `ref` only. A foreign key, which is what makes a rename safe.
+  refVariableId String?
+  /// `ref` only — pins a dimension slice (`[v] BY plan = "Growth"`).
+  refMember     String?
+  /// `call` only.
+  fn            FormulaFn?
+  /// Argument position under `parentId`, so the tree rebuilds deterministically.
+  order         Int
+
+  variable    Variable      @relation("VariableFormula", fields: [variableId], references: [id], onDelete: Cascade)
+  refVariable Variable?     @relation("FormulaRef", fields: [refVariableId], references: [id])
+  parent      FormulaNode?  @relation("FormulaTree", fields: [parentId], references: [id], onDelete: Cascade)
+  children    FormulaNode[] @relation("FormulaTree")
+
+  @@index([variableId])
+  @@index([parentId])
+  @@index([refVariableId])
+  @@map("formula_node")
+}
+
+/// One authored value. `dimensionKey` is why a dimensioned input can be stored
+/// at all — without it `New Accounts by plan` has nowhere to put its members.
+model VariableInput {
+  id           String   @id @default(uuid())
+  variableId   String
+  /// `""` is the undimensioned row (`TOTAL` in `lib/model/types.ts`).
+  dimensionKey String   @default("")
+  period       DateTime @db.Date
+  value        Decimal  @db.Decimal(20, 6)
+  variable     Variable @relation(fields: [variableId], references: [id], onDelete: Cascade)
+
+  @@unique([variableId, dimensionKey, period])
+  @@index([variableId])
+  @@map("variable_input")
+}
+
+/// §1.5. A cache, never a source of truth: a row past `staleAt` is recomputed
+/// rather than trusted.
+model VariableSeries {
+  id           String    @id @default(uuid())
+  variableId   String
+  scenarioId   String?
+  dimensionKey String    @default("")
+  values       Json
+  staleAt      DateTime?
+  computedAt   DateTime  @default(now())
+  variable     Variable  @relation(fields: [variableId], references: [id], onDelete: Cascade)
+  scenario     Scenario? @relation(fields: [scenarioId], references: [id], onDelete: Cascade)
+
+  @@unique([variableId, scenarioId, dimensionKey])
+  @@index([variableId])
+  @@map("variable_series")
+}
+
+model Scenario {
+  id        String             @id @default(uuid())
+  modelId   String
+  name      String
+  /// Scenarios branch from scenarios; the base case is the one with no parent.
+  parentId  String?
+  isBase    Boolean            @default(false)
+  model     Model              @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  parent    Scenario?          @relation("ScenarioTree", fields: [parentId], references: [id])
+  children  Scenario[]         @relation("ScenarioTree")
+  overrides ScenarioOverride[]
+  series    VariableSeries[]
+
+  @@unique([modelId, name])
+  @@index([modelId])
+  @@map("scenario")
+}
+
+/// §4. An overlay, never a copy. `value` is jsonb so an override can later hold
+/// a distribution (Monte Carlo) instead of a scalar without a migration.
+model ScenarioOverride {
+  id         String   @id @default(uuid())
+  scenarioId String
+  variableId String
+  value      Json
+  scenario   Scenario @relation(fields: [scenarioId], references: [id], onDelete: Cascade)
+  variable   Variable @relation(fields: [variableId], references: [id], onDelete: Cascade)
+
+  @@unique([scenarioId, variableId])
+  @@index([scenarioId])
+  @@map("scenario_override")
+}
+
+/// One atomic change to a model (§1.3, M3.1).
+///
+/// A user's keystroke is a changeset of one command; an agent's proposal (§1.4)
+/// will be a changeset of many, accepted or rejected together. Undo and redo are
+/// themselves changesets — the log is append-only, because it *is* the audit
+/// trail, and a trail you can delete from answers no question worth asking.
+model ChangeSet {
+  id       String           @id
+  modelId  String
+  /// Monotonic per model, and null until this changeset is actually applied.
+  /// A PROPOSED changeset holds commands nobody has run yet, so it must not occupy a slot
+  /// in "the commands since version X" that rollback and the undo stack walk — that is
+  /// what the ordered log actually means. It gets a real seq the moment it is accepted.
+  seq      Int?
+  kind     ChangeKind
+  origin   ChangeOrigin     @default(USER)
+  /// See ChangeSetStatus. Read as ACCEPTED when null.
+  status   ChangeSetStatus?
+  /// What the history panel shows: "Edit value", "Add variable".
+  label    String
+  /// The EDIT (or ROLLBACK) this UNDO or REDO acts on. It is what makes the
+  /// stack reconstructible; the undo still stores the commands it actually
+  /// applied, so every entry says what it did rather than what it points at.
+  targetId String?
+
+  /// Denormalised on purpose: a user row can be deleted and history must not
+  /// start lying about who did what. The id is the join; the name is the record.
+  actorId   String?
+  actorName String
+  createdAt DateTime @default(now())
+
+  model    Model       @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  target   ChangeSet?  @relation("ChangeSetTarget", fields: [targetId], references: [id])
+  reverts  ChangeSet[] @relation("ChangeSetTarget")
+  commands Command[]
+
+  @@unique([modelId, seq])
+  @@index([modelId, createdAt])
+  @@map("change_set")
+}
+
+/// One command and the command that undoes it (§1.3).
+///
+/// The payloads are `jsonb`, which is not a contradiction of §1.1's "no string
+/// column for formulas". §1.1 is about the *live* model, where a rename must not
+/// break sixty formulas. This is an immutable record of something that already
+/// happened: it must not follow a later rename, it must say what was done.
+model Command {
+  id          String      @id @default(uuid())
+  changeSetId String
+  /// Position within the changeset — commands do not commute.
+  order       Int
+  type        CommandType
+  payload     Json
+  /// Null on a still-PROPOSED command: the inverse is "undo what this did to the model",
+  /// and nothing has been done yet. Computed and filled in at accept time, from whatever
+  /// the model looks like *then* — not at proposal time, when it could go stale.
+  inverse     Json?
+
+  changeSet ChangeSet @relation(fields: [changeSetId], references: [id], onDelete: Cascade)
+
+  @@index([changeSetId])
+  @@map("command")
+}
+
+/// One comment, anchored to a variable and a period (§6, M6.1). Not a Command: a comment
+/// does not change the model's numbers, so it has no inverse and takes no place in the
+/// undo stack — it is closer to `ModelVersion`'s "a note about the model" than to an edit.
+model Comment {
+  id         String    @id @default(uuid())
+  modelId    String
+  variableId String
+  /// The first of the month, matching `VariableInput.period` — an index would silently
+  /// point at a different month if the model's horizon ever changed shape.
+  period     DateTime  @db.Date
+  body       String
+  authorId   String?
+  authorName String
+  resolvedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  model    Model    @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  variable Variable @relation(fields: [variableId], references: [id], onDelete: Cascade)
+
+  @@index([modelId, createdAt])
+  @@index([variableId])
+  @@map("comment")
+}
+
+/// One agent conversation (§5, M5.4 — superseding AgentRun; widened from one row per model
+/// to many, for a ChatGPT-style history sidebar).
+///
+/// `messages` holds the whole `UIMessage[]` array `useChat` renders — tool-call states and
+/// a pending proposal included, not a summary of them, which is what "a refresh does not
+/// lose the run" actually asked for.
+///
+/// Scoped to `(modelId, actorId)`: unlike Comments or the History panel, which show one
+/// shared record to whoever has the model open, a chat thread is somebody's own line of
+/// questioning and belongs in their own list, the way ChatGPT's history is per account and
+/// not a shared thread everyone appends to. `actorId` is nullable to match every other actor
+/// column in this schema (a deleted user must not take their history down with them), but a
+/// null-actor chat is orphaned — nothing lists it — which is an acceptable loss next to
+/// resurrecting a deleted account's identity.
+model AgentChat {
+  id        String   @id @default(uuid())
+  modelId   String
+  actorId   String?
+  /// The opening question, trimmed — set once, from the first user message, and never
+  /// touched again. Deriving it is the same "don't make someone name a folder" reasoning
+  /// M4.1 already gave for how a new scenario gets its name.
+  title     String
+  messages  Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  model Model @relation(fields: [modelId], references: [id], onDelete: Cascade)
+
+  @@index([modelId, actorId, updatedAt])
+  @@map("agent_chat")
+}
+
+/// A named point to come back to (§1.3, M3.3).
+///
+/// `snapshot` holds the whole model as the engine sees it. Rollback does *not*
+/// write it back — it replays inverses, so the log stays continuous and every
+/// step is attributable. The snapshot is what the replay is checked against: if
+/// the two disagree, some command was not honestly invertible and the rollback
+/// refuses rather than silently landing somewhere nobody named.
+model ModelVersion {
+  id        String   @id @default(uuid())
+  modelId   String
+  /// The changeset seq this version was cut at — "the commands since it".
+  seq       Int
+  label     String
+  snapshot  Json
+  actorId   String?
+  actorName String
+  createdAt DateTime @default(now())
+
+  model Model @relation(fields: [modelId], references: [id], onDelete: Cascade)
+
+  @@index([modelId, seq])
+  @@map("model_version")
+}
+
+// ─── Database module ────────────────────────────────────────────────────────
+//
+// `docs/database-plan.md`. A typed table of records, whose real job is §3: a
+// column bucketed by a date field becomes a `LINKED` variable in a model,
+// through the same `InsertVariable` command the CSV importer already uses.
+//
+// Prefixed `Data*` because a bare `Record` collides with TypeScript's
+// `Record<K, V>` in every file that would touch it.
+
+/// §1.3 — five types, and the renderer draws all five. The rule `NumberFormat`
+/// states applies here: this enum must not be able to express a state the grid
+/// cannot draw, so a new type lands on the day its cell renders and not before.
+/// There is deliberately no `PERSON`: it would render identically to `SELECT`,
+/// and a type that is a synonym is a type that will drift.
+enum FieldType {
+  TEXT
+  NUMBER
+  CURRENCY
+  DATE
+  SELECT
+}
+
+model DataTable {
+  id             String       @id @default(uuid())
+  organisationId String?
+  name           String
+  /// Stable URL key, so `/databases/[slug]` survives a rename.
+  slug           String
+  /// The sidebar glyph. A short emoji or lucide name, not a URL.
+  icon           String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  fields         DataField[]
+  records        DataRecord[]
+
+  @@unique([slug])
+  @@index([organisationId])
+  @@map("data_table")
+}
+
+model DataField {
+  id      String    @id @default(uuid())
+  tableId String
+  name    String
+  type    FieldType
+  /// `SELECT` only: `{ "options": [{ "value": "Active", "tone": "sky" }] }`.
+  /// The tone is a `ChipTone`, so a database chip is the design system's chip
+  /// and not a second palette invented next to it.
+  options Json?
+  order   Int
+
+  table DataTable @relation(fields: [tableId], references: [id], onDelete: Cascade)
+
+  @@unique([tableId, name])
+  @@index([tableId])
+  @@map("data_field")
+}
+
+/// One row. `cells` is keyed by **field id**, never by field name — the same
+/// reasoning §1.1 of the modelling plan gives for formula refs: renaming a
+/// field must not orphan every value under it.
+///
+/// jsonb rather than a real column per field, because adding a field must not
+/// be runtime DDL. The cost is honest: no per-field constraint, and no index on
+/// a cell until someone writes an expression index. Free at these row counts;
+/// the first thing to revisit at a million.
+model DataRecord {
+  id        String   @id @default(uuid())
+  tableId   String
+  cells     Json
+  order     Int
+  createdAt DateTime @default(now())
+
+  table DataTable @relation(fields: [tableId], references: [id], onDelete: Cascade)
+
+  @@index([tableId, order])
+  @@map("data_record")
+}
+
+// ─── Boards (Reporting) ─────────────────────────────────────────────────────
+//
+// `docs/board-plan.md`. A board is a page of tiles over data that already exists
+// — model series (§1.5) and database rollups (`docs/database-plan.md` §3). It
+// owns no numbers of its own, which is the whole point: "the same integrated
+// data, plans and databases" means a board must not become a fourth place a
+// figure can come from.
+
+enum TileKind {
+  KPI
+  CHART
+  TEXT
+}
+
+model Board {
+  id             String      @id @default(uuid())
+  organisationId String?
+  /// Stable URL key, so `/boards/[slug]` survives a rename.
+  slug           String
+  title          String
+  /// The emoji the design puts before the board title. Display only.
+  emoji          String?
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+  tiles          BoardTile[]
+
+  @@unique([slug])
+  @@index([organisationId])
+  @@map("board")
+}
+
+/// One tile. `spec` is the discriminated union in `lib/board/spec.ts`, parsed on
+/// every read — a tile written by an older build, or by a model that drifted, is
+/// rejected at the boundary rather than crashing the page it is on.
+///
+/// `question` is the prompt that produced it, kept for the same reason the change
+/// log keeps an actor: a figure on an executive board has to be able to say where
+/// it came from. Null for a tile nobody asked for in words.
+model BoardTile {
+  id        String   @id @default(uuid())
+  boardId   String
+  kind      TileKind
+  spec      Json
+  question  String?
+  order     Int
+  createdAt DateTime @default(now())
+
+  board Board @relation(fields: [boardId], references: [id], onDelete: Cascade)
+
+  @@index([boardId, order])
+  @@map("board_tile")
+}
+
+// ─── Finance-ops agents ─────────────────────────────────────────────────────
+//
+// `docs/agents-plan.md`. A spawned worker, not a conversation: the unit here is
+// a run you can walk away from and open later, which is why this is a row with
+// a status rather than a transcript.
+
+enum RunStatus {
+  RUNNING
+  /// Halted at a write tool, waiting for a human. See `interruptOn`.
+  WAITING
+  DONE
+  FAILED
+}
+
+model AgentRun {
+  id        String    @id @default(uuid())
+  actorId   String?
+  /// Denormalised for the same reason ChangeSet denormalises it: a deleted user
+  /// must not make the history start lying about who asked for what.
+  actorName String
+  task      String
+  /// `ask` | `plan` | `do` — which tools the run was given. Recorded because it
+  /// changes what the run was *able* to do, which is context a reader needs when
+  /// they come back to it and wonder why nothing was proposed.
+  mode      String    @default("do")
+  status    RunStatus @default(RUNNING)
+
+  /// The todo list. Generated deterministically *before* the run starts
+  /// (`lib/agents/planner.ts`) and then updated by the agent as it works, so a
+  /// run always has a visible plan rather than one it was merely asked to write.
+  plan      Json?
+  /// The plan's heading and one-line summary, for the card.
+  planTitle String?
+  planNote  String?
+  /// What the run is doing right now — the live line under the header. Null once
+  /// the run is no longer running; a finished run is not "reading the tables".
+  activity  String?
+  /// Tool calls and subagent delegations, in order. Written *during* the run —
+  /// progress that only lands on completion is a spinner with extra steps, and
+  /// a crashed run would leave nothing to read.
+  steps     Json?
+  /// The virtual filesystem the run wrote: its working notes and its output.
+  files     Json?
+  /// Everything this run designed, in order, with what became of each one.
+  /// Durable on purpose: the canvas used to derive these from `pending`, which
+  /// is cleared on approval — so the table card vanished at the exact moment it
+  /// became real. A record of the work has to outlive the decision about it.
+  artifacts Json?
+  /// Signatures of writes a person has already declined on this run. The agent is
+  /// not trusted to remember — see `lib/agents/run.ts`.
+  declined  Json?
+  /// While WAITING: the write the agent is asking permission for, as LangChain's
+  /// `actionRequests` — the tool name and the exact arguments. Stored rather than
+  /// re-derived, so the approval screen can show what it is approving without
+  /// having to reconstruct the graph to ask.
+  pending   Json?
+
+  result String?
+  error  String?
+
+  /// The LangGraph thread, so a WAITING run can be resumed where it stopped.
+  threadId   String
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  finishedAt DateTime?
+
+  @@index([actorId, createdAt])
+  @@map("agent_run")
+}

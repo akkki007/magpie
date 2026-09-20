@@ -1,0 +1,94 @@
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+
+# dependencies
+/node_modules
+/.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+# testing
+/coverage
+
+# next.js
+/.next/
+/out/
+
+# production
+/build
+
+# misc
+.DS_Store
+*.pem
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# env files (can opt-in for committing if needed)
+.env*
+
+# vercel
+.vercel
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+
+# python
+__pycache__/
+
+/lib/generated/prisma
+
+# ...but the template for it is committed.
+!.env.example
+
+# Generated reconciliation fixtures — deterministic, regenerate with `bun run recon:seed`.
+# The CSVs and truth.json stay out: 1.3MB of synthetic rows that any clone can rebuild.
+#
+# `eval-report.json` is the exception, and it is committed on purpose. /recon renders that
+# file, and a deployment has no shell to regenerate it in — so ignoring it meant the queue
+# was permanently empty in production while looking fine locally, telling the user to run a
+# command they cannot run. 31KB is a fair price for the screen existing.
+#
+# Written as three rules rather than `!/data/recon/eval-report.json` under `/data`, because
+# git never descends into an excluded directory: the parent has to stay listable for the
+# negation below to be reachable at all.
+/data/*
+!/data/recon/
+/data/recon/*
+!/data/recon/eval-report.json
+
+# demo recordings — oculon-product.mp4 is 22MB and was swept into a commit once
+# already, then removed with `git rm --cached`. Ignored as a pattern so the next
+# recording does not repeat it.
+*.mp4
+
+# Planning docs and design spec. Untracked deliberately — they are working notes for
+# building Magpie, not part of what it ships. Source comments still cite them by path
+# (`docs/modelling-plan.md` §1.1 and friends); those are references for whoever has the
+# folder, not files a fresh clone will find.
+/docs/
+
+# Personal notes, not project material.
+/how-to-pitch.md
+
+# Vendored Supabase agent skills, pulled from supabase/agent-skills. Local tooling, and
+# somebody else's source to be re-fetched rather than committed here. Note the paths name
+# these two specifically: design-from-references and teach are ours and stay tracked.
+/skills-lock.json
+/.agents/skills/supabase/
+/.agents/skills/supabase-postgres-best-practices/
+/.claude/skills/supabase
+/.claude/skills/supabase-postgres-best-practices
+
+# Pitch script. Working notes, same as how-to-pitch.md.
+/pitch-script.md
+
+# Pitch Q&A answers. Working notes.
+/pitch-questions.md

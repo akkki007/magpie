@@ -1,0 +1,14 @@
+node_modules
+.next
+.git
+.env
+.env.*
+!.env.example
+docs
+designs
+*.mp4
+how-to-pitch.md
+pitch-script.md
+pitch-questions.md
+.claude
+.agents
